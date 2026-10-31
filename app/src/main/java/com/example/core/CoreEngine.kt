@@ -1,5 +1,6 @@
 package com.example.core
 
+import android.content.Context
 import com.example.domain.model.AppSettings
 import com.example.domain.model.EngineStatistics
 import com.example.domain.model.EngineType
@@ -17,7 +18,7 @@ import kotlinx.coroutines.flow.StateFlow
 interface CoreEngine {
     val engineType: EngineType
 
-    suspend fun initialize(): Result<Unit>
+    suspend fun initialize(context: Context? = null): Result<Unit>
 
     fun validateConfig(
         profile: ServerProfile,
@@ -30,8 +31,16 @@ interface CoreEngine {
         profile: ServerProfile,
         settings: AppSettings,
         customRules: List<RoutingRuleItem> = emptyList(),
-        protectSocket: (Int) -> Boolean = { true }
+        protectSocket: (Int) -> Boolean = { true },
+        onLog: (String, String, String) -> Unit = { _, _, _ -> }
     ): Result<Int>
+
+    suspend fun verifyActiveConnection(
+        testUrl: String? = null,
+        timeoutMs: Int = 5000
+    ): Result<Long>
+
+    fun markConnected()
 
     suspend fun stop()
 
@@ -48,4 +57,8 @@ interface CoreEngine {
     suspend fun healthCheck(): Result<Long>
 
     fun isNativeBinaryLoaded(): Boolean
+
+    fun isEngineRunning(): Boolean
+
+    fun getEngineVersion(): String
 }

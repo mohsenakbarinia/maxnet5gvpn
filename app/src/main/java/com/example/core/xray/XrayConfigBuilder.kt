@@ -14,14 +14,9 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * Programmatic Xray-core Configuration Builder & Validator.
- * Generates complete, standards-compliant Xray JSON configurations with:
- * - Local-only SOCKS5 & HTTP inbounds bound strictly to 127.0.0.1
- * - Sniffing (http, tls, quic, fakedns)
- * - Statistics policy (uplink/downlink traffic counters)
- * - Outbounds (proxy, direct, block, dns-out)
- * - DNS loop prevention, DoH/DoT, Direct DNS for bypassed country/domains, FakeDNS
- * - Routing modes (Global, Rule-Based, Direct) + GeoIP/GeoSite + custom rules
+ * Programmatic Xray-core v26.10.29 Configuration Builder & Strict Validator.
+ * Generates complete, standards-compliant Xray JSON configurations and validates
+ * protocol, UUID, port, TLS, REALITY, WebSocket, gRPC, HTTPUpgrade, DNS, and routing rules.
  */
 object XrayConfigBuilder {
 
@@ -33,47 +28,105 @@ object XrayConfigBuilder {
         VpnProtocol.WIREGUARD
     )
 
+    private val uuidRegex = Regex(
+        "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$|^[0-9a-fA-F]{32}$"
+    )
+
+    private val shortIdHexRegex = Regex("^[0-9a-fA-F]{0,16}$")
+
+    private val validVlessFlows = setOf(
+        "",
+        "xtls-rprx-vision",
+        "xtls-rprx-vision-udp443"
+    )
+
+    private val validShadowsocksCiphers = setOf(
+        "aes-128-gcm",
+        "aes-256-gcm",
+        "chacha20-poly1305",
+        "chacha20-ietf-poly1305",
+        "xchacha20-poly1305",
+        "xchacha20-ietf-poly1305",
+        "2022-blake3-aes-128-gcm",
+        "2022-blake3-aes-256-gcm",
+        "2022-blake3-chacha20-poly1305",
+        "none",
+        "plain"
+    )
+
+    fun isValidUuid(value: String): Boolean {
+        return uuidRegex.matches(value.trim())
+    }
+
     fun buildAndValidate(
         profile: ServerProfile,
         settings: AppSettings,
         customRules: List<RoutingRuleItem> = emptyList(),
-        localSocksPort: Int = 10808
+        localSocksPort: Int = 10808,
+        includeNativeTunInbound: Boolean = false
     ): ValidationResult {
         val errors = mutableListOf<String>()
         val warnings = mutableListOf<String>()
 
         if (profile.protocol !in supportedProtocols) {
-            errors.add("Protocol ${profile.protocol.displayName} is not supported by Xray-core. Switch engine to sing-box for ${profile.protocol.displayName}.")
+            errors.add(
+                "پروتکل ${profile.protocol.displayName} توسط موتور Xray-core پشتیبانی نمی‌شود (Protocol ${profile.protocol.displayName} is not supported by Xray-core)."
+            )
         }
-        if (profile.address.isBlank() || profile.address.contains(" ")) {
-            errors.add("Server address cannot be empty or contain spaces.")
+        val cleanAddress = profile.address.trim().removeSurrounding("[", "]")
+        if (cleanAddress.isBlank() || cleanAddress.contains(" ")) {
+            errors.add("آدرس سرور نمی‌تواند خالی یا دارای فاصله باشد (Server address cannot be empty or contain spaces).")
         }
         if (profile.port !in 1..65535) {
-            errors.add("Server port must be between 1 and 65535 (got ${profile.port}).")
+            errors.add("پورت سرور باید بین 1 تا 65535 باشد (Server port must be between 1 and 65535, got ${profile.port}).")
         }
         if (profile.credential.isBlank()) {
-            errors.add("${profile.protocol.displayName} credential (UUID / Password / Key) cannot be empty.")
+            errors.add("شناسه کاربری / رمز عبور (${profile.protocol.displayName}) نمی‌تواند خالی باشد (Credential cannot be empty).")
+        } else if (profile.protocol == VpnProtocol.VLESS || profile.protocol == VpnProtocol.VMESS) {
+            if (!isValidUuid(profile.credential)) {
+                errors.add(
+                    "فرمت UUID در پروفایل ${profile.protocol.displayName} نامعتبر است (Invalid UUID format for ${profile.protocol.displayName})."
+                )
+            }
         }
+
         if (localSocksPort !in 1024..65535) {
             errors.add("Local SOCKS port must be an unprivileged port between 1024 and 65535.")
         }
 
-        // Validate protocol + transport + security combinations
+        if (profile.protocol == VpnProtocol.SHADOWSOCKS) {
+            val cipher = profile.encryption.trim().lowercase().ifBlank { "aes-256-gcm" }
+            if (cipher !in validShadowsocksCiphers) {
+                errors.add("روش رمزنگاری Shadowsocks پشتیبانی نمی‌شود (Unsupported Shadowsocks cipher: ${profile.encryption}).")
+            }
+        }
+
+        // Validate REALITY security parameters (never fabricate missing security credentials)
         if (profile.security == SecurityType.REALITY) {
             if (profile.protocol != VpnProtocol.VLESS && profile.protocol != VpnProtocol.TROJAN) {
-                errors.add("REALITY security is only supported with VLESS or Trojan protocols.")
+                errors.add("امنیت REALITY فقط با پروتکل‌های VLESS و Trojan سازگار است (REALITY is only supported with VLESS or Trojan).")
             }
             if (profile.realityPublicKey.isBlank()) {
-                errors.add("REALITY security requires a valid Public Key (pbk).")
+                errors.add("امنیت REALITY نیازمند کلید عمومی معتبر (pbk / Public Key) است (REALITY requires a valid public key pbk).")
+            }
+            val effectiveSni = profile.sni.ifBlank { profile.host }
+            if (effectiveSni.isBlank()) {
+                errors.add("امنیت REALITY نیازمند مقدار معتبر SNI (serverName) است (REALITY requires a valid SNI / serverName).")
+            }
+            if (!shortIdHexRegex.matches(profile.realityShortId.trim())) {
+                errors.add("مقدار ShortId (sid) در REALITY باید رشته هگزادسیمال حداکثر ۱۶ کاراکتری باشد (Invalid REALITY shortId hex format).")
             }
             if (profile.network !in setOf(TransportType.TCP, TransportType.GRPC, TransportType.H2, TransportType.XHTTP)) {
                 errors.add("REALITY is incompatible with ${profile.network.displayName} transport.")
             }
         }
 
+        // Validate VLESS flow
         if (profile.flow.isNotBlank()) {
             if (profile.protocol != VpnProtocol.VLESS) {
-                errors.add("Flow (${profile.flow}) is only supported on VLESS protocol.")
+                errors.add("پارامتر Flow (${profile.flow}) فقط در پروتکل VLESS پشتیبانی می‌شود (Flow is only supported on VLESS).")
+            } else if (profile.flow.trim() !in validVlessFlows) {
+                errors.add("مقدار Flow (${profile.flow}) در Xray-core پشتیبانی نمی‌شود؛ از xtls-rprx-vision استفاده کنید (Unsupported VLESS flow: ${profile.flow}).")
             }
             if (profile.network != TransportType.TCP && profile.network != TransportType.MKCP) {
                 errors.add("VLESS flow (${profile.flow}) requires TCP transport with TLS or REALITY.")
@@ -112,11 +165,23 @@ object XrayConfigBuilder {
             }
         )
 
-        // 2. Stats & Policy configuration
+        // 2. Stats & Policy configuration (required for CoreController.queryAllOutboundTrafficStats)
         root.put("stats", JSONObject())
         root.put(
             "policy",
             JSONObject().apply {
+                put(
+                    "levels",
+                    JSONObject().put(
+                        "8",
+                        JSONObject().apply {
+                            put("handshake", 4)
+                            put("connIdle", 300)
+                            put("uplinkOnly", 1)
+                            put("downlinkOnly", 1)
+                        }
+                    )
+                )
                 put(
                     "system",
                     JSONObject().apply {
@@ -130,10 +195,29 @@ object XrayConfigBuilder {
         )
 
         // 3. DNS configuration
+        if (settings.enableFakeDns) {
+            root.put(
+                "fakedns",
+                JSONArray().put(
+                    JSONObject().apply {
+                        put("ipPool", "198.18.0.0/15")
+                        put("poolSize", 65535)
+                    }
+                )
+            )
+        }
         root.put("dns", buildDnsObject(profile, settings))
 
-        // 4. Inbounds (Strictly bound to 127.0.0.1)
-        root.put("inbounds", buildInboundsArray(localSocksPort, settings.enableFakeDns))
+        // 4. Inbounds (Strictly bound to 127.0.0.1 + optional Xray native tun inbound)
+        root.put(
+            "inbounds",
+            buildInboundsArray(
+                localSocksPort = localSocksPort,
+                enableFakeDns = settings.enableFakeDns,
+                mtu = settings.mtu,
+                includeNativeTunInbound = includeNativeTunInbound
+            )
+        )
 
         // 5. Outbounds (proxy, direct, block, dns-out)
         root.put("outbounds", buildOutboundsArray(profile, settings))
@@ -141,12 +225,52 @@ object XrayConfigBuilder {
         // 6. Routing configuration
         root.put("routing", buildRoutingObject(profile, settings, customRules))
 
+        val configString = root.toString(2)
+
+        // 7. If host Xray-core binary is available in test environment, also run engine-level check
+        val engineCheck = XrayNativeBridge.validateConfigWithEngine(configString)
+        if (engineCheck.isFailure) {
+            return ValidationResult(
+                isValid = false,
+                errors = listOf(engineCheck.exceptionOrNull()?.message ?: "Xray engine rejected configuration"),
+                warnings = warnings,
+                generatedConfigJson = configString
+            )
+        }
+
         return ValidationResult(
             isValid = true,
             errors = emptyList(),
             warnings = warnings,
+            generatedConfigJson = configString
+        )
+    }
+
+    /**
+     * Builds a minimal outbound-only Xray configuration for `Libv2ray.measureOutboundDelay`.
+     */
+    fun buildSpeedtestConfig(profile: ServerProfile, settings: AppSettings): ValidationResult {
+        val full = buildAndValidate(profile, settings, emptyList(), 10808, false)
+        if (!full.isValid) return full
+        val root = JSONObject()
+        root.put("remarks", profile.remarks)
+        root.put("log", JSONObject().put("loglevel", "warning"))
+        root.put("outbounds", buildOutboundsArray(profile, settings))
+        return ValidationResult(
+            isValid = true,
+            errors = emptyList(),
+            warnings = full.warnings,
             generatedConfigJson = root.toString(2)
         )
+    }
+
+    private fun countryDomainRules(countryCode: String): JSONArray {
+        return when (val cc = countryCode.trim().lowercase()) {
+            "ir" -> JSONArray().put("domain:ir").put("geosite:category-ir")
+            "ru" -> JSONArray().put("domain:ru").put("geosite:category-ru")
+            "cn" -> JSONArray().put("geosite:cn")
+            else -> JSONArray().put("domain:$cc")
+        }
     }
 
     private fun buildDnsObject(profile: ServerProfile, settings: AppSettings): JSONObject {
@@ -155,12 +279,13 @@ object XrayConfigBuilder {
             servers.put("fakedns")
         }
 
+        val cleanAddress = profile.address.trim().removeSurrounding("[", "]")
         // Prevent DNS loop: resolve the proxy server's own domain using direct DNS
-        if (!isIpLiteral(profile.address)) {
+        if (!isIpLiteral(cleanAddress)) {
             servers.put(
                 JSONObject().apply {
                     put("address", settings.directDns.ifBlank { "1.1.1.1" })
-                    put("domains", JSONArray().put("full:${profile.address}"))
+                    put("domains", JSONArray().put("full:$cleanAddress"))
                     put("skipFallback", true)
                 }
             )
@@ -171,7 +296,7 @@ object XrayConfigBuilder {
             servers.put(
                 JSONObject().apply {
                     put("address", settings.directDns.ifBlank { "1.1.1.1" })
-                    put("domains", JSONArray().put("geosite:$country"))
+                    put("domains", countryDomainRules(country))
                     put("expectIPs", JSONArray().put("geoip:$country"))
                     put("skipFallback", true)
                 }
@@ -194,7 +319,12 @@ object XrayConfigBuilder {
         }
     }
 
-    private fun buildInboundsArray(localSocksPort: Int, enableFakeDns: Boolean): JSONArray {
+    private fun buildInboundsArray(
+        localSocksPort: Int,
+        enableFakeDns: Boolean,
+        mtu: Int,
+        includeNativeTunInbound: Boolean
+    ): JSONArray {
         val destOverride = JSONArray().apply {
             put("http")
             put("tls")
@@ -212,6 +342,7 @@ object XrayConfigBuilder {
                 JSONObject().apply {
                     put("auth", "noauth")
                     put("udp", true)
+                    put("userLevel", 8)
                 }
             )
             put(
@@ -219,7 +350,7 @@ object XrayConfigBuilder {
                 JSONObject().apply {
                     put("enabled", true)
                     put("destOverride", destOverride)
-                    put("routeOnly", false)
+                    put("routeOnly", !enableFakeDns)
                 }
             )
         }
@@ -234,26 +365,54 @@ object XrayConfigBuilder {
                 JSONObject().apply {
                     put("enabled", true)
                     put("destOverride", destOverride)
+                    put("routeOnly", !enableFakeDns)
                 }
             )
         }
 
-        return JSONArray().put(socksInbound).put(httpInbound)
+        val array = JSONArray().put(socksInbound).put(httpInbound)
+        if (includeNativeTunInbound) {
+            val tunInbound = JSONObject().apply {
+                put("tag", "tun")
+                put("protocol", "tun")
+                put(
+                    "settings",
+                    JSONObject().apply {
+                        put("name", "xray0")
+                        put("MTU", mtu.coerceIn(1280, 1500))
+                        put("userLevel", 8)
+                    }
+                )
+                put(
+                    "sniffing",
+                    JSONObject().apply {
+                        put("enabled", true)
+                        put("destOverride", destOverride)
+                        put("routeOnly", !enableFakeDns)
+                    }
+                )
+            }
+            array.put(tunInbound)
+        }
+        return array
     }
 
     private fun buildOutboundsArray(profile: ServerProfile, settings: AppSettings): JSONArray {
         val outbounds = JSONArray()
         outbounds.put(buildProxyOutbound(profile))
 
+        val domainStrategy = if (settings.enableIpv6) "UseIP" else "UseIPv4"
         outbounds.put(
             JSONObject().apply {
                 put("tag", OutboundTag.DIRECT.wireTag)
                 put("protocol", "freedom")
+                put("settings", JSONObject())
                 put(
-                    "settings",
-                    JSONObject().apply {
-                        put("domainStrategy", if (settings.enableIpv6) "UseIP" else "UseIPv4")
-                    }
+                    "streamSettings",
+                    JSONObject().put(
+                        "sockopt",
+                        JSONObject().put("domainStrategy", domainStrategy)
+                    )
                 )
             }
         )
@@ -285,16 +444,18 @@ object XrayConfigBuilder {
         val outbound = JSONObject()
         outbound.put("tag", OutboundTag.PROXY.wireTag)
         outbound.put("protocol", profile.protocol.scheme)
+        val cleanAddress = profile.address.trim().removeSurrounding("[", "]")
 
         when (profile.protocol) {
             VpnProtocol.VLESS -> {
                 val user = JSONObject().apply {
-                    put("id", profile.credential)
+                    put("id", profile.credential.trim())
                     put("encryption", profile.encryption.ifBlank { "none" })
-                    if (profile.flow.isNotBlank()) put("flow", profile.flow)
+                    put("level", 8)
+                    if (profile.flow.isNotBlank()) put("flow", profile.flow.trim())
                 }
                 val vnext = JSONObject().apply {
-                    put("address", profile.address)
+                    put("address", cleanAddress)
                     put("port", profile.port)
                     put("users", JSONArray().put(user))
                 }
@@ -303,12 +464,13 @@ object XrayConfigBuilder {
             }
             VpnProtocol.VMESS -> {
                 val user = JSONObject().apply {
-                    put("id", profile.credential)
+                    put("id", profile.credential.trim())
                     put("alterId", profile.alterId)
                     put("security", profile.encryption.ifBlank { "auto" })
+                    put("level", 8)
                 }
                 val vnext = JSONObject().apply {
-                    put("address", profile.address)
+                    put("address", cleanAddress)
                     put("port", profile.port)
                     put("users", JSONArray().put(user))
                 }
@@ -317,28 +479,31 @@ object XrayConfigBuilder {
             }
             VpnProtocol.TROJAN -> {
                 val server = JSONObject().apply {
-                    put("address", profile.address)
+                    put("address", cleanAddress)
                     put("port", profile.port)
                     put("password", profile.credential)
+                    put("level", 8)
                 }
                 outbound.put("settings", JSONObject().put("servers", JSONArray().put(server)))
                 outbound.put("streamSettings", buildStreamSettings(profile))
             }
             VpnProtocol.SHADOWSOCKS -> {
                 val server = JSONObject().apply {
-                    put("address", profile.address)
+                    put("address", cleanAddress)
                     put("port", profile.port)
                     put("method", profile.encryption.ifBlank { "aes-256-gcm" })
                     put("password", profile.credential)
                     put("uot", true)
+                    put("level", 8)
                 }
                 outbound.put("settings", JSONObject().put("servers", JSONArray().put(server)))
                 outbound.put("streamSettings", buildStreamSettings(profile))
             }
             VpnProtocol.WIREGUARD -> {
                 outbound.put("protocol", "wireguard")
+                val endpointHost = if (cleanAddress.contains(":")) "[$cleanAddress]" else cleanAddress
                 val peer = JSONObject().apply {
-                    put("endpoint", "${profile.address}:${profile.port}")
+                    put("endpoint", "$endpointHost:${profile.port}")
                     put("publicKey", profile.wireGuardPublicKey)
                 }
                 outbound.put(
@@ -356,10 +521,27 @@ object XrayConfigBuilder {
         return outbound
     }
 
+    private fun normalizePath(rawPath: String): String {
+        val trimmed = rawPath.trim()
+        return when {
+            trimmed.isEmpty() -> "/"
+            trimmed.startsWith("/") -> trimmed
+            else -> "/$trimmed"
+        }
+    }
+
     private fun buildStreamSettings(profile: ServerProfile): JSONObject {
         val stream = JSONObject()
         stream.put("network", profile.network.wireName)
         stream.put("security", profile.security.wireName)
+
+        val cleanAddress = profile.address.trim().removeSurrounding("[", "]")
+        val resolvedSni = when {
+            profile.sni.isNotBlank() -> profile.sni.trim()
+            profile.host.isNotBlank() -> profile.host.trim().split(",").first().trim()
+            !isIpLiteral(cleanAddress) -> cleanAddress
+            else -> ""
+        }
 
         when (profile.security) {
             SecurityType.TLS -> {
@@ -367,9 +549,8 @@ object XrayConfigBuilder {
                     "tlsSettings",
                     JSONObject().apply {
                         put("allowInsecure", profile.allowInsecure)
-                        if (profile.sni.isNotBlank()) put("serverName", profile.sni)
-                        else if (profile.host.isNotBlank()) put("serverName", profile.host)
-                        if (profile.fingerprint.isNotBlank()) put("fingerprint", profile.fingerprint)
+                        if (resolvedSni.isNotBlank()) put("serverName", resolvedSni)
+                        if (profile.fingerprint.isNotBlank()) put("fingerprint", profile.fingerprint.trim())
                         if (profile.alpn.isNotBlank()) {
                             val alpnArray = JSONArray()
                             profile.alpn.split(",").map { it.trim() }.filter { it.isNotEmpty() }
@@ -385,10 +566,10 @@ object XrayConfigBuilder {
                     JSONObject().apply {
                         put("show", false)
                         put("fingerprint", profile.fingerprint.ifBlank { "chrome" })
-                        put("serverName", profile.sni.ifBlank { profile.host })
-                        put("publicKey", profile.realityPublicKey)
-                        put("shortId", profile.realityShortId)
-                        put("spiderX", profile.realitySpiderX.ifBlank { "/" })
+                        put("serverName", profile.sni.ifBlank { profile.host }.trim())
+                        put("publicKey", profile.realityPublicKey.trim())
+                        put("shortId", profile.realityShortId.trim())
+                        put("spiderX", normalizePath(profile.realitySpiderX))
                     }
                 )
             }
@@ -397,12 +578,15 @@ object XrayConfigBuilder {
 
         when (profile.network) {
             TransportType.WS -> {
+                val wsPath = normalizePath(profile.path)
+                val wsHost = profile.host.trim()
                 stream.put(
                     "wsSettings",
                     JSONObject().apply {
-                        put("path", profile.path.ifBlank { "/" })
-                        if (profile.host.isNotBlank()) {
-                            put("headers", JSONObject().put("Host", profile.host))
+                        put("path", wsPath)
+                        if (wsHost.isNotBlank()) {
+                            put("host", wsHost)
+                            put("headers", JSONObject().put("Host", wsHost))
                         }
                     }
                 )
@@ -411,8 +595,11 @@ object XrayConfigBuilder {
                 stream.put(
                     "grpcSettings",
                     JSONObject().apply {
-                        put("serviceName", profile.serviceName.ifBlank { profile.path })
+                        put("serviceName", profile.serviceName.ifBlank { profile.path.removePrefix("/") })
                         put("multiMode", false)
+                        if (profile.host.isNotBlank()) {
+                            put("authority", profile.host.trim())
+                        }
                     }
                 )
             }
@@ -420,9 +607,12 @@ object XrayConfigBuilder {
                 stream.put(
                     "httpSettings",
                     JSONObject().apply {
-                        put("path", profile.path.ifBlank { "/" })
+                        put("path", normalizePath(profile.path))
                         if (profile.host.isNotBlank()) {
-                            put("host", JSONArray().put(profile.host))
+                            val hostArr = JSONArray()
+                            profile.host.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+                                .forEach { hostArr.put(it) }
+                            put("host", hostArr)
                         }
                     }
                 )
@@ -431,8 +621,8 @@ object XrayConfigBuilder {
                 stream.put(
                     "httpupgradeSettings",
                     JSONObject().apply {
-                        put("path", profile.path.ifBlank { "/" })
-                        if (profile.host.isNotBlank()) put("host", profile.host)
+                        put("path", normalizePath(profile.path))
+                        if (profile.host.isNotBlank()) put("host", profile.host.trim())
                     }
                 )
             }
@@ -440,8 +630,8 @@ object XrayConfigBuilder {
                 stream.put(
                     "xhttpSettings",
                     JSONObject().apply {
-                        put("path", profile.path.ifBlank { "/" })
-                        if (profile.host.isNotBlank()) put("host", profile.host)
+                        put("path", normalizePath(profile.path))
+                        if (profile.host.isNotBlank()) put("host", profile.host.trim())
                         put("mode", "auto")
                     }
                 )
@@ -478,9 +668,12 @@ object XrayConfigBuilder {
                                 put(
                                     "request",
                                     JSONObject().apply {
-                                        put("path", JSONArray().put(profile.path.ifBlank { "/" }))
+                                        put("path", JSONArray().put(normalizePath(profile.path)))
                                         if (profile.host.isNotBlank()) {
-                                            put("headers", JSONObject().put("Host", JSONArray().put(profile.host)))
+                                            val hostArr = JSONArray()
+                                            profile.host.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+                                                .forEach { hostArr.put(it) }
+                                            put("headers", JSONObject().put("Host", hostArr))
                                         }
                                     }
                                 )
@@ -511,12 +704,13 @@ object XrayConfigBuilder {
             }
         )
 
+        val cleanAddress = profile.address.trim().removeSurrounding("[", "]")
         // Ensure proxy server address itself is never routed back into proxy
-        if (!isIpLiteral(profile.address)) {
+        if (!isIpLiteral(cleanAddress)) {
             rules.put(
                 JSONObject().apply {
                     put("type", "field")
-                    put("domain", JSONArray().put("full:${profile.address}"))
+                    put("domain", JSONArray().put("full:$cleanAddress"))
                     put("outboundTag", OutboundTag.DIRECT.wireTag)
                 }
             )
@@ -544,14 +738,22 @@ object XrayConfigBuilder {
 
         // User-defined custom rules
         for (rule in customRules.filter { it.isEnabled && it.value.isNotBlank() }) {
+            val trimmedVal = rule.value.trim()
             val ruleObj = JSONObject().apply {
                 put("type", "field")
                 put("outboundTag", rule.outboundTag.wireTag)
                 when (rule.type) {
-                    RoutingRuleType.DOMAIN -> put("domain", JSONArray().put(rule.value.trim()))
-                    RoutingRuleType.IP_CIDR -> put("ip", JSONArray().put(rule.value.trim()))
-                    RoutingRuleType.GEOIP -> put("ip", JSONArray().put("geoip:${rule.value.trim().lowercase()}"))
-                    RoutingRuleType.GEOSITE -> put("domain", JSONArray().put("geosite:${rule.value.trim().lowercase()}"))
+                    RoutingRuleType.DOMAIN -> put("domain", JSONArray().put(trimmedVal))
+                    RoutingRuleType.IP_CIDR -> put("ip", JSONArray().put(trimmedVal))
+                    RoutingRuleType.GEOIP -> put("ip", JSONArray().put("geoip:${trimmedVal.lowercase()}"))
+                    RoutingRuleType.GEOSITE -> {
+                        val lower = trimmedVal.lowercase()
+                        if (lower == "ir") {
+                            put("domain", countryDomainRules("ir"))
+                        } else {
+                            put("domain", JSONArray().put("geosite:$lower"))
+                        }
+                    }
                 }
             }
             rules.put(ruleObj)
@@ -564,7 +766,7 @@ object XrayConfigBuilder {
                     rules.put(
                         JSONObject().apply {
                             put("type", "field")
-                            put("domain", JSONArray().put("geosite:$country"))
+                            put("domain", countryDomainRules(country))
                             put("outboundTag", OutboundTag.DIRECT.wireTag)
                         }
                     )
@@ -610,8 +812,9 @@ object XrayConfigBuilder {
         }
     }
 
-    private fun isIpLiteral(address: String): Boolean {
+    fun isIpLiteral(address: String): Boolean {
+        val clean = address.trim().removeSurrounding("[", "]")
         val ipv4Regex = Regex("^\\d{1,3}(\\.\\d{1,3}){3}$")
-        return ipv4Regex.matches(address) || address.contains(":")
+        return ipv4Regex.matches(clean) || clean.contains(":")
     }
 }

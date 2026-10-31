@@ -1,5 +1,9 @@
 package com.example.core
 
+import android.content.Context
+import com.example.core.xray.XrayConfigBuilder
+import com.example.core.xray.XrayNativeBridge
+import com.example.domain.model.AppSettings
 import com.example.domain.model.LatencyMeasureType
 import com.example.domain.model.ServerProfile
 import kotlinx.coroutines.Dispatchers
@@ -10,10 +14,7 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import java.net.InetSocketAddress
-import java.net.Proxy
 import java.net.Socket
-import java.net.HttpURLConnection
-import java.net.URL
 
 data class LatencyTestOutcome(
     val profileId: Long,
@@ -25,14 +26,21 @@ data class LatencyTestOutcome(
 /**
  * Real Server Latency & Delay Tester.
  * - Never fabricates ping values.
- * - Clearly distinguishes between [LatencyMeasureType.TCP_HANDSHAKE] (socket connect time)
- *   and [LatencyMeasureType.PROXY_HTTP_DELAY] (end-to-end HTTP 204 delay through local SOCKS5 proxy).
+ * - Clearly distinguishes between:
+ *   1. [LatencyMeasureType.TCP_HANDSHAKE] (TCP socket connect time to server:port).
+ *   2. [LatencyMeasureType.PROXY_HTTP_DELAY] (actual HTTP 204 delay through the encrypted Xray-core proxy).
+ * - Never substitutes a TCP handshake result when a proxy HTTP 204 test fails.
  * - Uses a bounded concurrency semaphore (10 workers max) with full cancellation support.
  */
 object LatencyTester {
     private const val MAX_CONCURRENT_WORKERS = 10
     private const val DEFAULT_TIMEOUT_MS = 3500
+    const val DEFAULT_HTTP_204_URL = "https://cp.cloudflare.com/generate_204"
 
+    /**
+     * Measures raw TCP handshake latency (`connect()` to `profile.address:profile.port`).
+     * Clearly labeled as [LatencyMeasureType.TCP_HANDSHAKE].
+     */
     suspend fun testSingleTcpLatency(
         profile: ServerProfile,
         timeoutMs: Int = DEFAULT_TIMEOUT_MS
@@ -54,42 +62,86 @@ object LatencyTester {
                 profileId = profile.id,
                 latencyMs = null,
                 measureType = LatencyMeasureType.TIMEOUT,
-                errorReason = e.message ?: "Connection timeout"
+                errorReason = e.message ?: "TCP connection timeout"
             )
         }
     }
 
+    /**
+     * Measures real end-to-end HTTP 204 delay through the currently running local SOCKS5 proxy.
+     * Does NOT fall back to TCP handshake on failure — reports [LatencyMeasureType.TIMEOUT] with the real error.
+     */
     suspend fun testProxyHttp204Delay(
         profile: ServerProfile,
         localSocksPort: Int,
-        timeoutMs: Int = 4500
+        testUrl: String = DEFAULT_HTTP_204_URL,
+        timeoutMs: Int = 5000
     ): LatencyTestOutcome = withContext(Dispatchers.IO) {
-        val startNs = System.nanoTime()
-        return@withContext try {
-            val proxy = Proxy(Proxy.Type.SOCKS, InetSocketAddress("127.0.0.1", localSocksPort))
-            val url = URL("https://cp.cloudflare.com/generate_204")
-            val conn = (url.openConnection(proxy) as HttpURLConnection).apply {
-                connectTimeout = timeoutMs
-                readTimeout = timeoutMs
-                instanceFollowRedirects = false
-                requestMethod = "HEAD"
-            }
-            val code = conn.responseCode
-            conn.disconnect()
-            if (code in 200..299) {
-                val elapsedMs = ((System.nanoTime() - startNs) / 1_000_000L).coerceAtLeast(1L)
+        val delayResult = XrayNativeBridge.measureActiveProxyDelay(
+            localSocksPort = localSocksPort,
+            testUrl = testUrl,
+            timeoutMs = timeoutMs
+        )
+        delayResult.fold(
+            onSuccess = { delayMs ->
                 LatencyTestOutcome(
                     profileId = profile.id,
-                    latencyMs = elapsedMs,
+                    latencyMs = delayMs,
                     measureType = LatencyMeasureType.PROXY_HTTP_DELAY
                 )
-            } else {
-                // Fall back to real TCP handshake measurement and label it clearly
-                testSingleTcpLatency(profile, timeoutMs)
+            },
+            onFailure = { err ->
+                LatencyTestOutcome(
+                    profileId = profile.id,
+                    latencyMs = null,
+                    measureType = LatencyMeasureType.TIMEOUT,
+                    errorReason = err.message ?: "Proxy HTTP 204 test failed"
+                )
             }
-        } catch (_: Exception) {
-            testSingleTcpLatency(profile, timeoutMs)
+        )
+    }
+
+    /**
+     * Measures real end-to-end HTTP 204 delay for an arbitrary profile using Xray-core's
+     * standalone `measureOutboundDelay` (without needing an active VPN session).
+     */
+    suspend fun testStandaloneProxyDelay(
+        context: Context?,
+        profile: ServerProfile,
+        settings: AppSettings = AppSettings(),
+        testUrl: String = DEFAULT_HTTP_204_URL
+    ): LatencyTestOutcome = withContext(Dispatchers.IO) {
+        val validation = XrayConfigBuilder.buildSpeedtestConfig(profile, settings)
+        if (!validation.isValid) {
+            return@withContext LatencyTestOutcome(
+                profileId = profile.id,
+                latencyMs = null,
+                measureType = LatencyMeasureType.TIMEOUT,
+                errorReason = validation.errors.firstOrNull() ?: "Invalid Xray configuration"
+            )
         }
+        val delayResult = XrayNativeBridge.measureStandaloneOutboundDelay(
+            context = context,
+            configJson = validation.generatedConfigJson,
+            testUrl = testUrl
+        )
+        delayResult.fold(
+            onSuccess = { delayMs ->
+                LatencyTestOutcome(
+                    profileId = profile.id,
+                    latencyMs = delayMs,
+                    measureType = LatencyMeasureType.PROXY_HTTP_DELAY
+                )
+            },
+            onFailure = { err ->
+                LatencyTestOutcome(
+                    profileId = profile.id,
+                    latencyMs = null,
+                    measureType = LatencyMeasureType.TIMEOUT,
+                    errorReason = err.message ?: "Outbound proxy delay test failed"
+                )
+            }
+        )
     }
 
     suspend fun testProfilesConcurrently(

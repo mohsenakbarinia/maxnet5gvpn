@@ -227,17 +227,25 @@ fun HomeScreen(
             // Connection Status Pill
             val statusText = when (connectionState) {
                 VpnConnectionState.DISCONNECTED -> stringResource(R.string.state_disconnected)
+                VpnConnectionState.PREPARING -> stringResource(R.string.state_preparing)
+                VpnConnectionState.STARTING_ENGINE -> stringResource(R.string.state_starting_engine)
                 VpnConnectionState.CONNECTING -> stringResource(R.string.state_connecting)
+                VpnConnectionState.VERIFYING -> stringResource(R.string.state_verifying)
                 VpnConnectionState.CONNECTED -> stringResource(R.string.state_connected)
                 VpnConnectionState.RECONNECTING -> stringResource(R.string.state_reconnecting)
-                VpnConnectionState.DISCONNECTING -> stringResource(R.string.state_disconnecting)
+                VpnConnectionState.STOPPING -> stringResource(R.string.state_stopping)
                 VpnConnectionState.ERROR -> stringResource(R.string.state_error)
             }
             val statusColor = when (connectionState) {
                 VpnConnectionState.CONNECTED -> EmeraldAccent
-                VpnConnectionState.CONNECTING, VpnConnectionState.RECONNECTING -> AmberWarning
+                VpnConnectionState.PREPARING,
+                VpnConnectionState.STARTING_ENGINE,
+                VpnConnectionState.CONNECTING,
+                VpnConnectionState.VERIFYING,
+                VpnConnectionState.RECONNECTING,
+                VpnConnectionState.STOPPING -> AmberWarning
                 VpnConnectionState.ERROR -> CoralError
-                else -> MaterialTheme.colorScheme.onSurfaceVariant
+                VpnConnectionState.DISCONNECTED -> MaterialTheme.colorScheme.onSurfaceVariant
             }
 
             Row(
@@ -589,7 +597,14 @@ private fun ConnectionPowerOrb(
     onClick: () -> Unit
 ) {
     val isConnected = state == VpnConnectionState.CONNECTED
-    val isBusy = state == VpnConnectionState.CONNECTING || state == VpnConnectionState.RECONNECTING
+    val isBusy = state in setOf(
+        VpnConnectionState.PREPARING,
+        VpnConnectionState.STARTING_ENGINE,
+        VpnConnectionState.CONNECTING,
+        VpnConnectionState.VERIFYING,
+        VpnConnectionState.RECONNECTING,
+        VpnConnectionState.STOPPING
+    )
 
     val infiniteTransition = rememberInfiniteTransition(label = "orbPulse")
     val pulseScale by infiniteTransition.animateFloat(
@@ -605,9 +620,14 @@ private fun ConnectionPowerOrb(
     val ringColor by animateColorAsState(
         targetValue = when (state) {
             VpnConnectionState.CONNECTED -> EmeraldAccent
-            VpnConnectionState.CONNECTING, VpnConnectionState.RECONNECTING -> AmberWarning
+            VpnConnectionState.PREPARING,
+            VpnConnectionState.STARTING_ENGINE,
+            VpnConnectionState.CONNECTING,
+            VpnConnectionState.VERIFYING,
+            VpnConnectionState.RECONNECTING,
+            VpnConnectionState.STOPPING -> AmberWarning
             VpnConnectionState.ERROR -> CoralError
-            else -> CyanPrimary
+            VpnConnectionState.DISCONNECTED -> CyanPrimary
         },
         label = "orbRingColor"
     )

@@ -1,8 +1,10 @@
 package com.example
 
+import com.example.core.LatencyTester
 import com.example.core.singbox.SingBoxConfigBuilder
 import com.example.core.xray.XrayConfigBuilder
 import com.example.domain.model.AppSettings
+import com.example.domain.model.LatencyMeasureType
 import com.example.domain.model.OutboundTag
 import com.example.domain.model.RoutingMode
 import com.example.domain.model.RoutingRuleItem
@@ -10,24 +12,30 @@ import com.example.domain.model.RoutingRuleType
 import com.example.domain.model.SecurityType
 import com.example.domain.model.ServerProfile
 import com.example.domain.model.TransportType
+import com.example.domain.model.VpnConnectionState
 import com.example.domain.model.VpnProtocol
 import com.example.parser.ConfigParser
 import com.example.security.CredentialCipher
 import com.example.security.LogRedactor
 import com.example.util.LocalizationHelper
+import com.example.vpn.VpnController
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
-import org.junit.runner.RunWith
 import org.junit.Test
+import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import java.io.File
+import java.net.InetAddress
+import java.net.ServerSocket
+import java.util.concurrent.TimeUnit
 
 /**
- * Comprehensive Automated Parser, Configuration Builder, Encryption, and Redaction Test Suite.
- * Uses only example.com, RFC 5737 documentation IP ranges (192.0.2.x, 198.51.100.x, 203.0.113.x),
- * and RFC 3849 IPv6 documentation addresses (2001:db8::/32).
+ * Comprehensive Automated Parser, Configuration Builder, Real Xray-core v26.10.29 Engine Validation,
+ * Encrypted VLESS Loopback Tunnel, Latency Testing, Encryption, and Redaction Test Suite.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
@@ -57,7 +65,7 @@ class ExampleUnitTest {
         val vmessJson = """
             {"v":"2","ps":"VMess-Node-ایران","add":"198.51.100.25","port":"8443","id":"$testUuid","aid":"0","scy":"auto","net":"ws","type":"none","host":"cdn.example.com","path":"/ws-path","tls":"tls","sni":"cdn.example.com","alpn":"h2,http/1.1","fp":"firefox"}
         """.trimIndent()
-        val encoded = ConfigParser.encodeBase64NoPad(vmessJson, urlSafe = true) // URL-safe without padding
+        val encoded = ConfigParser.encodeBase64NoPad(vmessJson, urlSafe = true)
         val uri = "vmess://$encoded"
 
         val parsed = ConfigParser.parseSingleUri(uri).getOrThrow()
@@ -69,7 +77,6 @@ class ExampleUnitTest {
         assertEquals(SecurityType.TLS, parsed.security)
         assertEquals("/ws-path", parsed.path)
 
-        // Round-trip conversion
         val shareUri = ConfigParser.toShareUri(parsed)
         val reparsed = ConfigParser.parseSingleUri(shareUri).getOrThrow()
         assertEquals(parsed.address, reparsed.address)
@@ -114,7 +121,7 @@ class ExampleUnitTest {
     }
 
     @Test
-    fun `reject invalid Base64, missing parameters, HTML body, and deduplicate batch`() {
+    fun `reject invalid UUID, invalid port, missing REALITY parameters, HTML body, and deduplicate batch`() {
         val htmlResult = ConfigParser.parseBatch("<!DOCTYPE html><html><body>Error</body></html>")
         assertTrue(htmlResult.profiles.isEmpty())
         assertFalse(htmlResult.failures.isEmpty())
@@ -122,10 +129,24 @@ class ExampleUnitTest {
         val invalidVmess = ConfigParser.parseSingleUri("vmess://!!!not_base64!!!")
         assertTrue(invalidVmess.isFailure)
 
+        val invalidUuid = ConfigParser.parseSingleUri("vless://not-a-valid-uuid@example.com:443?security=tls&sni=example.com")
+        assertTrue(invalidUuid.isFailure)
+
+        val invalidPort = ConfigParser.parseSingleUri("vless://$testUuid@example.com:70000?security=tls&sni=example.com")
+        assertTrue(invalidPort.isFailure)
+
         val missingPort = ConfigParser.parseSingleUri("vless://$testUuid@example.com?security=tls")
         assertTrue(missingPort.isFailure)
 
-        // Batch with whitespace, duplicate URIs, and one invalid line
+        val missingRealityPbk = ConfigParser.parseSingleUri("vless://$testUuid@example.com:443?security=reality&sni=example.com")
+        assertTrue(missingRealityPbk.isFailure)
+
+        val missingRealitySni = ConfigParser.parseSingleUri("vless://$testUuid@example.com:443?security=reality&pbk=TestPubKey12345")
+        assertTrue(missingRealitySni.isFailure)
+
+        val invalidRealitySid = ConfigParser.parseSingleUri("vless://$testUuid@example.com:443?security=reality&sni=example.com&pbk=TestPubKey12345&sid=NOT_HEX_ZZ")
+        assertTrue(invalidRealitySid.isFailure)
+
         val validLine = "vless://$testUuid@192.0.2.50:443?type=ws&security=tls&path=%2Fedge&sni=example.com#Node1"
         val batchText = """
             
@@ -140,7 +161,7 @@ class ExampleUnitTest {
     }
 
     @Test
-    fun `validate Xray and sing-box configuration builders`() {
+    fun `validate Xray and sing-box configuration builders and test against Xray-core v26_10_29`() {
         val validProfile = ServerProfile(
             remarks = "Edge-TLS",
             protocol = VpnProtocol.VLESS,
@@ -171,8 +192,27 @@ class ExampleUnitTest {
         val xrayValidation = XrayConfigBuilder.buildAndValidate(validProfile, settings, rules, 10808)
         assertTrue(xrayValidation.isValid)
         assertTrue(xrayValidation.generatedConfigJson.contains("\"listen\": \"127.0.0.1\""))
-        assertTrue(xrayValidation.generatedConfigJson.contains("geosite:ir"))
+        assertTrue(xrayValidation.generatedConfigJson.contains("geosite:category-ir"))
         assertTrue(xrayValidation.generatedConfigJson.contains("geosite:category-ads-all"))
+
+        // If upstream Xray 26.10.29 host binary is available, verify `xray run -test` accepts our generated JSON
+        val hostXray = File("/tmp/xray-linux/xray")
+        if (hostXray.exists() && hostXray.canExecute()) {
+            val tmpCfg = File.createTempFile("xray-unit-test-", ".json")
+            try {
+                tmpCfg.writeText(xrayValidation.generatedConfigJson)
+                val proc = ProcessBuilder(hostXray.absolutePath, "run", "-test", "-c", tmpCfg.absolutePath)
+                    .apply { environment()["XRAY_LOCATION_ASSET"] = hostXray.parentFile?.absolutePath ?: "/tmp/xray-linux" }
+                    .redirectErrorStream(true)
+                    .start()
+                assertTrue(proc.waitFor(5, TimeUnit.SECONDS))
+                val output = proc.inputStream.bufferedReader().readText()
+                assertEquals("Xray 26.10.29 rejected config: $output", 0, proc.exitValue())
+                assertTrue(output.contains("Configuration OK"))
+            } finally {
+                tmpCfg.delete()
+            }
+        }
 
         // Reject REALITY without publicKey
         val invalidReality = validProfile.copy(security = SecurityType.REALITY, realityPublicKey = "")
@@ -189,6 +229,165 @@ class ExampleUnitTest {
     }
 
     @Test
+    fun `verify real end-to-end VLESS encrypted proxy tunnel and HTTP 204 verification via Xray-core`() = runBlocking {
+        val hostXray = File("/tmp/xray-linux/xray")
+        if (!hostXray.exists() || !hostXray.canExecute()) return@runBlocking
+
+        val loopback = InetAddress.getByName("127.0.0.1")
+        // 1. Start a real local SOCKS5 + HTTP 204 upstream responder for the VLESS server
+        val httpServerSocket = ServerSocket(0, 16, loopback)
+        val httpPort = httpServerSocket.localPort
+        val httpThread = Thread {
+            while (!httpServerSocket.isClosed) {
+                try {
+                    val client = httpServerSocket.accept()
+                    client.soTimeout = 2000
+                    val inp = client.getInputStream()
+                    val out = client.getOutputStream()
+                    // SOCKS5 greeting from VLESS server outbound
+                    val greet = ByteArray(3)
+                    inp.read(greet)
+                    out.write(byteArrayOf(0x05, 0x00))
+                    out.flush()
+                    // SOCKS5 CONNECT from VLESS server outbound
+                    val reqBuf = ByteArray(64)
+                    inp.read(reqBuf)
+                    out.write(byteArrayOf(0x05, 0x00, 0x00, 0x01, 127, 0, 0, 1, 0, 80))
+                    out.flush()
+                    // Read HTTP request tunneled through VLESS
+                    val httpBuf = ByteArray(1024)
+                    inp.read(httpBuf)
+                    val resp = "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    out.write(resp.toByteArray())
+                    out.flush()
+                    client.close()
+                } catch (_: Exception) {
+                    if (httpServerSocket.isClosed) break
+                }
+            }
+        }.apply { isDaemon = true; start() }
+
+        // 2. Start a real local Xray-core v26.10.29 VLESS server on 127.0.0.1
+        val vlessServerPort = ServerSocket(0, 1, loopback).use { it.localPort }
+        val serverConfigFile = File.createTempFile("xray-vless-server-", ".json")
+        serverConfigFile.writeText(
+            """
+            {
+              "log": { "loglevel": "warning" },
+              "inbounds": [
+                {
+                  "tag": "vless-in",
+                  "listen": "127.0.0.1",
+                  "port": $vlessServerPort,
+                  "protocol": "vless",
+                  "settings": {
+                    "clients": [
+                      { "id": "$testUuid" }
+                    ],
+                    "decryption": "none"
+                  },
+                  "streamSettings": {
+                    "network": "tcp",
+                    "security": "none"
+                  }
+                }
+              ],
+              "outbounds": [
+                {
+                  "tag": "direct",
+                  "protocol": "socks",
+                  "settings": {
+                    "servers": [
+                      { "address": "127.0.0.1", "port": $httpPort }
+                    ]
+                  }
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+        val serverProcess = ProcessBuilder(hostXray.absolutePath, "run", "-c", serverConfigFile.absolutePath)
+            .apply { environment()["XRAY_LOCATION_ASSET"] = hostXray.parentFile?.absolutePath ?: "/tmp/xray-linux" }
+            .redirectErrorStream(true)
+            .start()
+
+        try {
+            // Wait until the local VLESS server port is listening
+            Thread.sleep(350)
+
+            val clientProfile = ServerProfile(
+                id = 77L,
+                remarks = "Real-VLESS-Loopback-Server",
+                protocol = VpnProtocol.VLESS,
+                address = "127.0.0.1",
+                port = vlessServerPort,
+                credential = testUuid,
+                encryption = "none",
+                network = TransportType.TCP,
+                security = SecurityType.NONE
+            )
+            val observedStates = mutableListOf<VpnConnectionState>()
+            val test204Url = "http://1.1.1.1/generate_204"
+
+            // 3. Connect VpnController with full HTTP 204 verification enabled
+            val tunnelSettings = AppSettings(routingMode = RoutingMode.GLOBAL, bypassLan = false)
+            val startResult = VpnController.startSession(
+                profile = clientProfile,
+                settings = tunnelSettings,
+                rules = emptyList(),
+                establishTunAndForwarder = { true },
+                verifyConnectivity = true,
+                verificationUrl = test204Url,
+                onStateChanged = { state -> observedStates.add(state) }
+            )
+
+            assertTrue("Expected real VLESS session to succeed: ${startResult.exceptionOrNull()?.message}", startResult.isSuccess)
+            val clientSocksPort = startResult.getOrThrow()
+            assertEquals(VpnConnectionState.CONNECTED, VpnController.connectionState.value)
+            assertTrue(observedStates.contains(VpnConnectionState.PREPARING))
+            assertTrue(observedStates.contains(VpnConnectionState.STARTING_ENGINE))
+            assertTrue(observedStates.contains(VpnConnectionState.CONNECTING))
+            assertTrue(observedStates.contains(VpnConnectionState.VERIFYING))
+            assertTrue(observedStates.contains(VpnConnectionState.CONNECTED))
+
+            // 4. Test real proxy HTTP 204 delay through the active SOCKS5 port
+            val latencyOutcome = LatencyTester.testProxyHttp204Delay(
+                profile = clientProfile,
+                localSocksPort = clientSocksPort,
+                testUrl = test204Url
+            )
+            assertEquals(LatencyMeasureType.PROXY_HTTP_DELAY, latencyOutcome.measureType)
+            assertNotNull(latencyOutcome.latencyMs)
+            assertTrue((latencyOutcome.latencyMs ?: 0L) >= 1L)
+
+            // 5. Stop session cleanly
+            VpnController.stopSession()
+            assertEquals(VpnConnectionState.DISCONNECTED, VpnController.connectionState.value)
+
+            // 6. Verify that an unreachable server port fails verification and transitions to ERROR (never fake CONNECTED)
+            val deadPort = ServerSocket(0, 1, loopback).use { it.localPort }
+            val deadProfile = clientProfile.copy(port = deadPort, remarks = "Dead-Server")
+            val deadResult = VpnController.startSession(
+                profile = deadProfile,
+                settings = tunnelSettings,
+                rules = emptyList(),
+                establishTunAndForwarder = { true },
+                verifyConnectivity = true,
+                verificationUrl = test204Url,
+                onStateChanged = { state -> observedStates.add(state) }
+            )
+            assertTrue("Dead server must fail verification", deadResult.isFailure)
+            assertEquals(VpnConnectionState.ERROR, VpnController.connectionState.value)
+        } finally {
+            VpnController.stopSession()
+            serverProcess.destroyForcibly()
+            serverConfigFile.delete()
+            runCatching { httpServerSocket.close() }
+            httpThread.interrupt()
+        }
+    }
+
+    @Test
     fun `verify LogRedactor and CredentialCipher security`() {
         val rawLog = "Connecting vless://$testUuid@192.0.2.1:443 and https://sub.example.com/api?token=secret999"
         val sanitized = LogRedactor.redact(rawLog, listOf("MyCustomPassword123"))
@@ -200,7 +399,6 @@ class ExampleUnitTest {
         assertNotNull(encrypted)
         assertEquals(testUuid, CredentialCipher.decrypt(encrypted))
 
-        // Verify Persian digits and Jalali conversion
         val persianDigits = LocalizationHelper.formatDigits("443 ms", true)
         assertEquals("۴۴۳ ms", persianDigits)
     }

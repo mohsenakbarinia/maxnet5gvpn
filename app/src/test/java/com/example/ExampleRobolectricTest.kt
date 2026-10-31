@@ -84,9 +84,10 @@ class ExampleRobolectricTest {
             profile = testProfile,
             settings = settings,
             rules = emptyList(),
-            tunActive = true
+            establishTunAndForwarder = { true },
+            verifyConnectivity = false
         )
-        assertTrue(startRes.isSuccess)
+        assertTrue("Expected VpnController.startSession to succeed: ${startRes.exceptionOrNull()?.message}", startRes.isSuccess)
         val port = startRes.getOrThrow()
         assertTrue(port in 1024..65535)
         assertEquals(VpnConnectionState.CONNECTED, VpnController.connectionState.value)

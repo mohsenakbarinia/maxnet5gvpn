@@ -86,10 +86,13 @@ enum class SplitTunnelMode(val id: String) {
 
 enum class VpnConnectionState {
     DISCONNECTED,
+    PREPARING,
+    STARTING_ENGINE,
     CONNECTING,
+    VERIFYING,
     CONNECTED,
     RECONNECTING,
-    DISCONNECTING,
+    STOPPING,
     ERROR
 }
 
@@ -245,11 +248,14 @@ data class ValidationResult(
 data class DiagnosticSnapshot(
     val connectionState: VpnConnectionState = VpnConnectionState.DISCONNECTED,
     val activeEngine: EngineType = EngineType.XRAY_CORE,
+    val engineVersion: String = "Xray-core v26.10.29",
     val activeProfileRemarks: String = "None",
     val coreInitialized: Boolean = false,
     val tunInterfaceActive: Boolean = false,
+    val tunForwarderActive: Boolean = false,
     val localLoopbackPort: Int? = null,
-    val bridgeArchitectureStatus: String = "Android VpnService TUN + Local Loopback SOCKS5 (127.0.0.1)",
+    val verifiedProxyLatencyMs: Long? = null,
+    val bridgeArchitectureStatus: String = "Xray-core v26.10.29 (libgojni.so) + HevSocks5Tunnel (libhev-socks5-tunnel.so)",
     val lastError: String? = null
 )
 

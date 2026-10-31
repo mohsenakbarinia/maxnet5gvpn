@@ -1,4 +1,7 @@
 import com.google.gms.googleservices.GoogleServicesPlugin.MissingGoogleServicesStrategy
+import java.net.URI
+import java.security.MessageDigest
+import java.util.zip.ZipFile
 
 plugins {
   alias(libs.plugins.android.application)
@@ -6,6 +9,88 @@ plugins {
   alias(libs.plugins.google.devtools.ksp)
   alias(libs.plugins.secrets)
   alias(libs.plugins.google.services)
+}
+
+val prepareXrayCoreNative by tasks.registering {
+  val xrayCoreVersionTag = "v26.10.29"
+  val xrayCoreAarUrl = "https://github.com/2dust/AndroidLibXrayLite/releases/download/$xrayCoreVersionTag/libv2ray.aar"
+  val xrayCoreAarSha256 = "64fc529302dce728bde859f45d87a64f7289a5fbcca8ef962aae3d94c6e3fa82"
+  val outDir = layout.buildDirectory.dir("xray-native").get().asFile
+  outputs.dir(outDir)
+
+  doLast {
+    val jniOut = File(outDir, "jniLibs")
+    val assetsOut = File(outDir, "assets")
+    val marker = File(jniOut, "arm64-v8a/libgojni.so")
+    val geoipMarker = File(assetsOut, "geoip.dat")
+    if (marker.exists() && marker.length() > 10_000_000L && geoipMarker.exists()) {
+      return@doLast
+    }
+
+    outDir.mkdirs()
+    val cachedAar = File(outDir, "libv2ray-$xrayCoreVersionTag.aar")
+    if (!cachedAar.exists() || cachedAar.length() < 10_000_000L) {
+      logger.lifecycle("Downloading official Xray-core ($xrayCoreVersionTag) from $xrayCoreAarUrl ...")
+      URI(xrayCoreAarUrl).toURL().openStream().use { input ->
+        cachedAar.outputStream().use { output ->
+          input.copyTo(output)
+        }
+      }
+    }
+
+    val digest = MessageDigest.getInstance("SHA-256")
+    cachedAar.inputStream().use { fis ->
+      val buf = ByteArray(65536)
+      var r = fis.read(buf)
+      while (r > 0) {
+        digest.update(buf, 0, r)
+        r = fis.read(buf)
+      }
+    }
+    val actualHash = digest.digest().joinToString("") { "%02x".format(it) }
+    if (!actualHash.equals(xrayCoreAarSha256, ignoreCase = true)) {
+      cachedAar.delete()
+      throw GradleException("SHA-256 mismatch for libv2ray.aar ($xrayCoreVersionTag): expected $xrayCoreAarSha256, got $actualHash")
+    }
+
+    ZipFile(cachedAar).use { zip ->
+      val entries = zip.entries()
+      while (entries.hasMoreElements()) {
+        val entry = entries.nextElement()
+        if (entry.isDirectory) continue
+        when {
+          entry.name.startsWith("jni/") && entry.name.endsWith(".so") -> {
+            val rel = entry.name.removePrefix("jni/")
+            val dest = File(jniOut, rel)
+            dest.parentFile.mkdirs()
+            zip.getInputStream(entry).use { input ->
+              dest.outputStream().use { output -> input.copyTo(output) }
+            }
+          }
+          entry.name.startsWith("assets/") -> {
+            val rel = entry.name.removePrefix("assets/")
+            val dest = File(assetsOut, rel)
+            dest.parentFile.mkdirs()
+            zip.getInputStream(entry).use { input ->
+              dest.outputStream().use { output -> input.copyTo(output) }
+            }
+          }
+        }
+      }
+    }
+    logger.lifecycle("Extracted Xray-core ($xrayCoreVersionTag) native libraries and geodata to ${outDir.absolutePath}")
+  }
+}
+
+tasks.matching {
+  it.name == "preBuild" ||
+    it.name.startsWith("generate") ||
+    it.name.startsWith("merge") ||
+    it.name.startsWith("strip") ||
+    it.name.startsWith("compress") ||
+    it.name.startsWith("package")
+}.configureEach {
+  dependsOn(prepareXrayCoreNative)
 }
 
 android {
@@ -20,6 +105,23 @@ android {
     versionName = "1.0.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+    val requestedAbis = (project.findProperty("abiFilters") as? String)
+      ?.split(",")
+      ?.map { it.trim() }
+      ?.filter { it.isNotEmpty() }
+      ?: listOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
+
+    ndk {
+      abiFilters.addAll(requestedAbis)
+    }
+  }
+
+  sourceSets {
+    getByName("main") {
+      jniLibs.directories.add("build/xray-native/jniLibs")
+      assets.directories.add("build/xray-native/assets")
+    }
   }
 
   // Do not remove or modify these signingConfigs. They are necessary for building, installing,
@@ -99,6 +201,7 @@ googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.W
 // Some unused dependencies are commented out below instead of being removed.
 // This makes it easy to add them back in the future if needed.
 dependencies {
+  implementation(files("libs/libv2ray-api.jar"))
   implementation(platform(libs.androidx.compose.bom))
   // implementation(platform(libs.firebase.bom))
   // implementation(libs.accompanist.permissions)
@@ -144,6 +247,7 @@ dependencies {
   implementation(libs.okhttp)
   // implementation(libs.play.services.location)
   // implementation(libs.retrofit)
+  testImplementation(files("libs/libv2ray-api.jar"))
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)
   testImplementation(libs.androidx.junit)
@@ -160,5 +264,3 @@ dependencies {
   "ksp"(libs.androidx.room.compiler)
   // "ksp"(libs.moshi.kotlin.codegen)
 }
-
-

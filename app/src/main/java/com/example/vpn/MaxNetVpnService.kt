@@ -22,6 +22,8 @@ import com.example.data.repository.VpnRepository
 import com.example.domain.model.AppSettings
 import com.example.domain.model.ServerProfile
 import com.example.domain.model.SplitTunnelMode
+import com.example.domain.model.VpnConnectionState
+import com.v2ray.ang.service.TProxyService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -31,8 +33,12 @@ import kotlinx.coroutines.launch
 
 /**
  * Production Android [VpnService] implementation for MAXNET5G VPN.
- * - Establishes a real TUN interface with IPv4, optional IPv6, DNS, MTU, and per-app split tunneling.
- * - Excludes its own package where appropriate so outbound proxy sockets never loop back into TUN.
+ * - Starts Xray-core v26.10.29 (`libgojni.so`) on `127.0.0.1:<localSocksPort>`.
+ * - Establishes a real TUN interface with IPv4 (`10.26.26.1/30`), optional IPv6 (`fd00:1::1/126`),
+ *   DNS, MTU, and per-app split tunneling.
+ * - Starts `TProxyService` (`libhev-socks5-tunnel.so`) to forward TUN packets into Xray's local SOCKS5 port.
+ * - Excludes its own package AND calls `protect(fd)` via `Libv2ray` so outbound proxy sockets never loop into TUN.
+ * - Verifies real HTTP 204 proxy traffic before publishing `CONNECTED`.
  * - Runs as a persistent foreground service with a Disconnect notification action.
  * - Handles network changes (Wi-Fi <-> Mobile Data) and [onRevoke] cleanly.
  */
@@ -70,7 +76,7 @@ class MaxNetVpnService : VpnService() {
                 return START_NOT_STICKY
             }
             ACTION_CONNECT, null -> {
-                startForeground(NOTIFICATION_ID, buildForegroundNotification("Connecting…"))
+                startForeground(NOTIFICATION_ID, buildForegroundNotification("Preparing Xray-core…"))
                 serviceScope.launch {
                     connectVpn()
                 }
@@ -94,32 +100,94 @@ class MaxNetVpnService : VpnService() {
         }
 
         val rules = repository.getRoutingRulesSnapshot()
-        val establishedTun = establishTunInterface(selectedProfile, settings)
-        val tunActive = establishedTun != null
-        tunInterface = establishedTun
+        val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
         val result = VpnController.startSession(
+            context = applicationContext,
             profile = selectedProfile,
             settings = settings,
             rules = rules,
-            tunActive = tunActive,
+            establishTunAndForwarder = { localSocksPort ->
+                setupTunAndPacketForwarder(selectedProfile, settings, localSocksPort)
+            },
             protectSocket = { fd -> protect(fd) },
+            verifyConnectivity = true,
+            onStateChanged = { state ->
+                val stateLabel = when (state) {
+                    VpnConnectionState.PREPARING -> "Preparing config…"
+                    VpnConnectionState.STARTING_ENGINE -> "Starting Xray-core…"
+                    VpnConnectionState.CONNECTING -> "Establishing TUN & SOCKS5…"
+                    VpnConnectionState.VERIFYING -> "Verifying proxy connection…"
+                    VpnConnectionState.CONNECTED -> "${selectedProfile.remarks} (${selectedProfile.protocol.displayName})"
+                    VpnConnectionState.RECONNECTING -> "Reconnecting ${selectedProfile.remarks}…"
+                    VpnConnectionState.STOPPING -> "Stopping VPN…"
+                    VpnConnectionState.ERROR -> "Connection failed"
+                    VpnConnectionState.DISCONNECTED -> "Disconnected"
+                }
+                runCatching {
+                    notificationManager.notify(
+                        NOTIFICATION_ID,
+                        buildForegroundNotification(stateLabel)
+                    )
+                }
+            },
             onLog = { level, tag, msg ->
                 repository.appendLog(level, tag, msg, listOf(selectedProfile.credential))
             }
         )
 
         if (result.isSuccess) {
-            val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            val latencySuffix = VpnController.diagnostics.value.verifiedProxyLatencyMs?.let { " • ${it}ms" } ?: ""
             notificationManager.notify(
                 NOTIFICATION_ID,
-                buildForegroundNotification("${selectedProfile.remarks} (${selectedProfile.protocol.displayName})")
+                buildForegroundNotification("${selectedProfile.remarks} (${selectedProfile.protocol.displayName}$latencySuffix)")
             )
         } else {
+            TProxyService.stopTun2Socks()
             closeTunInterface()
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
         }
+    }
+
+    private fun setupTunAndPacketForwarder(
+        profile: ServerProfile,
+        settings: AppSettings,
+        localSocksPort: Int
+    ): Boolean {
+        TProxyService.stopTun2Socks()
+        closeTunInterface()
+
+        val pfd = establishTunInterface(profile, settings) ?: return false
+        tunInterface = pfd
+
+        val forwarderResult = TProxyService.startTun2Socks(
+            context = applicationContext,
+            tunFd = pfd.fd,
+            socksPort = localSocksPort,
+            mtu = settings.mtu.coerceIn(1280, 1500),
+            enableIpv6 = settings.enableIpv6
+        )
+
+        return forwarderResult.fold(
+            onSuccess = {
+                repository.appendLog(
+                    "INFO",
+                    "TProxyService",
+                    "Started native HevSocks5Tunnel on TUN fd=${pfd.fd} -> 127.0.0.1:$localSocksPort"
+                )
+                true
+            },
+            onFailure = { err ->
+                repository.appendLog(
+                    "ERROR",
+                    "TProxyService",
+                    "Failed to start HevSocks5Tunnel: ${err.message}"
+                )
+                closeTunInterface()
+                false
+            }
+        )
     }
 
     private fun establishTunInterface(profile: ServerProfile, settings: AppSettings): ParcelFileDescriptor? {
@@ -127,18 +195,21 @@ class MaxNetVpnService : VpnService() {
             val builder = Builder()
                 .setSession("MAXNET5G - ${profile.remarks}")
                 .setMtu(settings.mtu.coerceIn(1280, 1500))
-                .addAddress("10.16.0.2", 30)
+                .addAddress("10.26.26.1", 30)
                 .addRoute("0.0.0.0", 0)
 
-            // Configure DNS server (clean IP literal)
+            // Configure primary and secondary DNS servers
             val dnsServer = settings.directDns.trim().takeIf {
                 it.matches(Regex("^\\d{1,3}(\\.\\d{1,3}){3}$"))
             } ?: "1.1.1.1"
             builder.addDnsServer(dnsServer)
+            if (dnsServer != "8.8.8.8") {
+                runCatching { builder.addDnsServer("8.8.8.8") }
+            }
 
             if (settings.enableIpv6) {
                 runCatching {
-                    builder.addAddress("fd00:1::2", 126)
+                    builder.addAddress("fd00:1::1", 126)
                     builder.addRoute("::", 0)
                     builder.addDnsServer("2606:4700:4700::1111")
                 }
@@ -181,7 +252,7 @@ class MaxNetVpnService : VpnService() {
             builder.setConfigureIntent(configureIntent)
             builder.establish()
         } catch (e: Exception) {
-            repository.appendLog("WARN", "VpnService", "TUN interface establish note: ${e.message}")
+            repository.appendLog("ERROR", "VpnService", "TUN interface establish failed: ${e.message}")
             null
         }
     }
@@ -193,7 +264,7 @@ class MaxNetVpnService : VpnService() {
             repository.recordConnectionSession(
                 profileName = diag.activeProfileRemarks,
                 protocol = "VPN",
-                engine = diag.activeEngine.displayName,
+                engine = diag.engineVersion,
                 connectedAt = stats.connectedSinceMs,
                 disconnectedAt = System.currentTimeMillis(),
                 uploadBytes = stats.sessionUploadBytes,
@@ -238,12 +309,23 @@ class MaxNetVpnService : VpnService() {
                     super.onAvailable(network)
                     serviceScope.launch {
                         val settings = repository.settingsFlow.first()
+                        val profiles = repository.getAllProfilesSnapshot()
+                        val selectedProfile = profiles.find { it.id == settings.selectedProfileId }
+                            ?: profiles.firstOrNull()
                         if (settings.autoReconnect &&
-                            VpnController.connectionState.value == com.example.domain.model.VpnConnectionState.CONNECTED
+                            selectedProfile != null &&
+                            VpnController.connectionState.value == VpnConnectionState.CONNECTED
                         ) {
-                            VpnController.reconnectWithExponentialBackoff { level, tag, msg ->
-                                repository.appendLog(level, tag, msg)
-                            }
+                            VpnController.reconnectWithExponentialBackoff(
+                                establishTunAndForwarder = { port ->
+                                    setupTunAndPacketForwarder(selectedProfile, settings, port)
+                                },
+                                protectSocket = { fd -> protect(fd) },
+                                verifyConnectivity = true,
+                                onLog = { level, tag, msg ->
+                                    repository.appendLog(level, tag, msg, listOf(selectedProfile.credential))
+                                }
+                            )
                         }
                     }
                 }
@@ -301,6 +383,7 @@ class MaxNetVpnService : VpnService() {
         try {
             networkCallback?.let { connectivityManager?.unregisterNetworkCallback(it) }
         } catch (_: Exception) {}
+        TProxyService.stopTun2Socks()
         closeTunInterface()
         serviceScope.cancel()
         super.onDestroy()

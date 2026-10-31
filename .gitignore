@@ -16,3 +16,6 @@
 local.properties
 .env
 debug.keystore
+/dist
+/*.apk
+app/libs/*.aar

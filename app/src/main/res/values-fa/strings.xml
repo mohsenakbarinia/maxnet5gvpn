@@ -21,9 +21,13 @@
 
     <!-- Connection States -->
     <string name="state_disconnected">قطع شده</string>
-    <string name="state_connecting">در حال اتصال…</string>
+    <string name="state_preparing">آماده‌سازی کانفیگ…</string>
+    <string name="state_starting_engine">راه‌اندازی هسته Xray…</string>
+    <string name="state_connecting">برقراری تونل VPN…</string>
+    <string name="state_verifying">بررسی اتصال واقعی (HTTP 204)…</string>
     <string name="state_connected">متصل</string>
     <string name="state_reconnecting">در حال اتصال مجدد…</string>
+    <string name="state_stopping">در حال توقف…</string>
     <string name="state_disconnecting">در حال قطع اتصال…</string>
     <string name="state_error">خطا در اتصال</string>
 
@@ -130,7 +134,7 @@
     <string name="diagnostics_title">عیب‌یابی و گزارش‌های امن‌شده</string>
     <string name="export_diagnostics">خروجی گزارش بدون اطلاعات حساس</string>
     <string name="clear_logs">پاکسازی گزارش‌ها</string>
-    <string name="bridge_architecture_note">وضعیت موتور و پل شبکه: سرویس VpnService اندروید و آداپتور محلی SOCKS5 فعال است. توجه: باینری‌های بومی JNI نیازمند کامپایل NDK هستند؛ اعتبارسنجی کانفیگ و تست واقعی تاخیر TCP/Proxy فعال است.</string>
+    <string name="bridge_architecture_note">وضعیت موتور و پل شبکه: هسته بومی Xray-core v26.10.29 (libgojni.so) + تونل بومی HevSocks5Tunnel (libhev-socks5-tunnel.so) + سرویس VpnService اندروید و تست واقعی HTTP 204 فعال است.</string>
 
     <!-- Settings & About -->
     <string name="settings_title">تنظیمات عمومی و امنیت</string>

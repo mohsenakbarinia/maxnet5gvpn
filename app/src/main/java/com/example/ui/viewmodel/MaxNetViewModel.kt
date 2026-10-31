@@ -302,10 +302,26 @@ class MaxNetViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // Core Connection Lifecycle (Direct controller trigger + Service trigger)
-    fun toggleDirectEngineConnection() {
+    fun disconnectSession() {
+        viewModelScope.launch {
+            VpnController.stopSession { level, tag, msg ->
+                repository.appendLog(level, tag, msg)
+            }
+        }
+    }
+
+    fun toggleDirectEngineConnection(verifyConnectivity: Boolean = false) {
         viewModelScope.launch {
             val state = connectionState.value
-            if (state == VpnConnectionState.CONNECTED || state == VpnConnectionState.CONNECTING) {
+            val activeStates = setOf(
+                VpnConnectionState.PREPARING,
+                VpnConnectionState.STARTING_ENGINE,
+                VpnConnectionState.CONNECTING,
+                VpnConnectionState.VERIFYING,
+                VpnConnectionState.CONNECTED,
+                VpnConnectionState.RECONNECTING
+            )
+            if (state in activeStates) {
                 VpnController.stopSession { level, tag, msg ->
                     repository.appendLog(level, tag, msg)
                 }
@@ -316,10 +332,12 @@ class MaxNetViewModel(application: Application) : AndroidViewModel(application) 
                     return@launch
                 }
                 val res = VpnController.startSession(
+                    context = getApplication(),
                     profile = profile,
                     settings = settingsState.value,
                     rules = routingRulesState.value,
-                    tunActive = false,
+                    establishTunAndForwarder = { true },
+                    verifyConnectivity = verifyConnectivity,
                     onLog = { level, tag, msg ->
                         repository.appendLog(level, tag, msg, listOf(profile.credential))
                     }
@@ -349,6 +367,7 @@ class MaxNetViewModel(application: Application) : AndroidViewModel(application) 
             } else {
                 "${profile.remarks}: ${outcome.errorReason ?: "Timeout"}"
             }
+            showMessage(msg)
             repository.appendLog("INFO", "LatencyTest", msg, listOf(profile.credential))
         }
     }
@@ -607,9 +626,13 @@ class MaxNetViewModel(application: Application) : AndroidViewModel(application) 
         sb.appendLine("=== MAXNET5G VPN SANITIZED DIAGNOSTIC REPORT ===")
         sb.appendLine("Connection State: ${diag.connectionState.name}")
         sb.appendLine("Selected Engine: ${diag.activeEngine.displayName}")
+        sb.appendLine("Native Core Version: ${diag.engineVersion}")
         sb.appendLine("Active Profile: ${diag.activeProfileRemarks}")
         sb.appendLine("Core Initialized: ${diag.coreInitialized}")
         sb.appendLine("TUN Interface Active: ${diag.tunInterfaceActive}")
+        sb.appendLine("HevSocks5Tunnel Active: ${diag.tunForwarderActive}")
+        sb.appendLine("Local Loopback Port: ${diag.localLoopbackPort ?: "None"}")
+        sb.appendLine("Verified Proxy Delay: ${diag.verifiedProxyLatencyMs?.let { "${it}ms" } ?: "None"}")
         sb.appendLine("Bridge Architecture: ${diag.bridgeArchitectureStatus}")
         sb.appendLine("Routing Mode: ${settings.routingMode.name} (Bypass Country: ${settings.bypassCountryCode})")
         sb.appendLine("Split Tunnel Mode: ${settings.splitTunnelMode.name} (${settings.splitTunnelPackages.size} apps)")

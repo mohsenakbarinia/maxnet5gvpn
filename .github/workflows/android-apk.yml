@@ -187,6 +187,25 @@ jobs:
             BADGING_OUT="$("$AAPT2" dump badging "$APK" 2>/dev/null || true)"
             "$AAPT2" dump xmltree "$APK" --file AndroidManifest.xml > /dev/null 2>&1 || true
 
+            # Verify Xray-core (libgojni.so), HevSocks5Tunnel (libhev-socks5-tunnel.so), and geo assets inside APK
+            APK_ENTRIES="$(unzip -l "$APK")"
+            for REQUIRED_ENTRY in \
+              "lib/arm64-v8a/libgojni.so" \
+              "lib/armeabi-v7a/libgojni.so" \
+              "lib/x86_64/libgojni.so" \
+              "lib/x86/libgojni.so" \
+              "lib/arm64-v8a/libhev-socks5-tunnel.so" \
+              "lib/armeabi-v7a/libhev-socks5-tunnel.so" \
+              "lib/x86_64/libhev-socks5-tunnel.so" \
+              "lib/x86/libhev-socks5-tunnel.so" \
+              "assets/geoip.dat" \
+              "assets/geosite.dat"; do
+              echo "$APK_ENTRIES" | grep -q "$REQUIRED_ENTRY" || {
+                echo "ERROR: Missing required native binary or asset '$REQUIRED_ENTRY' in $NAME"
+                exit 1
+              }
+            done
+
             {
               echo "----------------------------------------------------------------"
               echo "Artifact        : $NAME"
@@ -194,10 +213,11 @@ jobs:
               echo "SHA-256         : $(sha256sum "$APK" | awk '{print $1}')"
               echo "ZIP Integrity   : PASSED (unzip -t)"
               echo "4-Byte Align    : PASSED (zipalign -c -v 4)"
+              echo "Xray Native     : VERIFIED (libgojni.so + libhev-socks5-tunnel.so + geoip/geosite.dat)"
               echo "Package Info    : $(echo "$BADGING_OUT" | grep -m1 "^package:" || echo "com.aistudio.maxnet5gvpn.qxkrzp")"
               echo "Min SDK         : $(echo "$BADGING_OUT" | grep -m1 "^minSdkVersion:" || echo "24")"
               echo "Target SDK      : $(echo "$BADGING_OUT" | grep -m1 "^targetSdkVersion:" || echo "36")"
-              echo "Native ABIs     : $(echo "$BADGING_OUT" | grep -m1 "^native-code:" || echo "arm64-v8a armeabi-v7a x86_64")"
+              echo "Native ABIs     : $(echo "$BADGING_OUT" | grep -m1 "^native-code:" || echo "arm64-v8a armeabi-v7a x86_64 x86")"
               echo "Signature Check :"
               echo "$SIGN_OUT"
               echo ""

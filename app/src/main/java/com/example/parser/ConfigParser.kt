@@ -288,8 +288,24 @@ object ConfigParser {
             params["allowInsecure"].equals("true", ignoreCase = true) ||
             params["insecure"] == "1"
 
-        if (security == SecurityType.REALITY && pbk.isBlank()) {
-            return Result.failure(IllegalArgumentException("REALITY security requires a valid public key (pbk)"))
+        if (protocol == VpnProtocol.VLESS || protocol == VpnProtocol.VMESS || protocol == VpnProtocol.TUIC) {
+            if (!com.example.core.xray.XrayConfigBuilder.isValidUuid(credential)) {
+                return Result.failure(
+                    IllegalArgumentException("${protocol.displayName} credential must be a valid UUID (8-4-4-4-12 hex)")
+                )
+            }
+        }
+
+        if (security == SecurityType.REALITY) {
+            if (pbk.isBlank()) {
+                return Result.failure(IllegalArgumentException("REALITY security requires a valid public key (pbk)"))
+            }
+            if (sni.isBlank()) {
+                return Result.failure(IllegalArgumentException("REALITY security requires a target SNI (sni)"))
+            }
+            if (sid.isNotBlank() && !sid.matches(Regex("^[0-9a-fA-F]{1,16}$"))) {
+                return Result.failure(IllegalArgumentException("REALITY shortId (sid) must be 1..16 hexadecimal characters"))
+            }
         }
 
         val remarks = fragmentPart.ifBlank { "${protocol.displayName}-$host:$port" }
@@ -345,6 +361,9 @@ object ConfigParser {
             val id = obj.optString("id", "").trim()
             if (address.isEmpty() || port !in 1..65535 || id.isEmpty()) {
                 return Result.failure(IllegalArgumentException("VMess JSON missing valid add, port, or id"))
+            }
+            if (!com.example.core.xray.XrayConfigBuilder.isValidUuid(id)) {
+                return Result.failure(IllegalArgumentException("VMess JSON 'id' is not a valid UUID"))
             }
             val ps = obj.optString("ps", "").trim().ifBlank { "VMess-$address:$port" }
             val aid = obj.optString("aid", "0").toIntOrNull() ?: obj.optInt("aid", 0)
@@ -547,6 +566,18 @@ object ConfigParser {
                     val realitySettings = stream?.optJSONObject("realitySettings")
                     val wsSettings = stream?.optJSONObject("wsSettings")
                     val grpcSettings = stream?.optJSONObject("grpcSettings")
+                    val httpUpgradeSettings = stream?.optJSONObject("httpupgradeSettings")
+                    val xhttpSettings = stream?.optJSONObject("xhttpSettings") ?: stream?.optJSONObject("splithttpSettings")
+
+                    val extractedHost = wsSettings?.optString("host", "")?.takeIf { it.isNotBlank() }
+                        ?: wsSettings?.optJSONObject("headers")?.optString("Host", "")?.takeIf { it.isNotBlank() }
+                        ?: httpUpgradeSettings?.optString("host", "")?.takeIf { it.isNotBlank() }
+                        ?: xhttpSettings?.optString("host", "")
+                        ?: ""
+                    val extractedPath = wsSettings?.optString("path", "")?.takeIf { it.isNotBlank() }
+                        ?: httpUpgradeSettings?.optString("path", "")?.takeIf { it.isNotBlank() }
+                        ?: xhttpSettings?.optString("path", "")
+                        ?: ""
 
                     when (protocol) {
                         VpnProtocol.VLESS, VpnProtocol.VMESS -> {
@@ -570,8 +601,8 @@ object ConfigParser {
                                         encryption = enc,
                                         flow = flow,
                                         network = network,
-                                        host = wsSettings?.optJSONObject("headers")?.optString("Host", "") ?: "",
-                                        path = wsSettings?.optString("path", "") ?: "",
+                                        host = extractedHost,
+                                        path = extractedPath,
                                         serviceName = grpcSettings?.optString("serviceName", "") ?: "",
                                         security = security,
                                         sni = tlsSettings?.optString("serverName", "")

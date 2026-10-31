@@ -1,10 +1,19 @@
-# MAXNET5G VPN ProGuard / R8 Security & Serialization Rules
+# MAXNET5G VPN ProGuard / R8 Security & Native JNI Rules
 -keepattributes Signature, InnerClasses, EnclosingMethod, RuntimeVisibleAnnotations, *Annotation*
 -dontwarn javax.annotation.**
 -dontwarn org.codehaus.mojo.animal_sniffer.**
 -dontwarn okhttp3.**
 -dontwarn okio.**
 -dontwarn com.google.zxing.**
+-dontwarn go.**
+-dontwarn libv2ray.**
+
+# Keep Go mobile JNI bindings (AndroidLibXrayLite / Xray-core v26.10.29)
+-keep class go.** { *; }
+-keep class libv2ray.** { *; }
+
+# Keep HevSocks5Tunnel JNI entry point (libhev-socks5-tunnel.so)
+-keep class com.v2ray.ang.service.TProxyService { *; }
 
 # Keep Application Entry Points, Activities, VPN Services, TileService, and BroadcastReceivers
 -keep class com.example.MainActivity { *; }

@@ -21,10 +21,14 @@
 
     <!-- Connection States -->
     <string name="state_disconnected">Disconnected</string>
-    <string name="state_connecting">Connecting…</string>
+    <string name="state_preparing">Preparing Config…</string>
+    <string name="state_starting_engine">Starting Xray-core…</string>
+    <string name="state_connecting">Establishing Tunnel…</string>
+    <string name="state_verifying">Verifying Proxy (HTTP 204)…</string>
     <string name="state_connected">Connected</string>
     <string name="state_reconnecting">Reconnecting…</string>
-    <string name="state_disconnecting">Disconnecting…</string>
+    <string name="state_stopping">Stopping…</string>
+    <string name="state_disconnecting">Stopping…</string>
     <string name="state_error">Connection Error</string>
 
     <!-- Home Screen -->
@@ -130,7 +134,7 @@
     <string name="diagnostics_title">Diagnostics &amp; Redacted Logs</string>
     <string name="export_diagnostics">Export Sanitized Report</string>
     <string name="clear_logs">Clear Logs</string>
-    <string name="bridge_architecture_note">Engine Bridge Status: Real Android VpnService TUN + Local Loopback SOCKS5 Core Engine Adapter. Notice: Native libv2ray/libsingbox JNI binaries require NDK packaging; local socket relay &amp; TCP/HTTP proxy verifier active.</string>
+    <string name="bridge_architecture_note">Engine Bridge Status: Native Xray-core v26.10.29 (libgojni.so) + Native HevSocks5Tunnel (libhev-socks5-tunnel.so) + Android VpnService TUN + HTTP 204 Proxy Verifier.</string>
 
     <!-- Settings & About -->
     <string name="settings_title">General Settings &amp; Security</string>

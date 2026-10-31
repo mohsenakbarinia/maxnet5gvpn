@@ -22,7 +22,15 @@ class MaxNetTileService : TileService() {
     override fun onClick() {
         super.onClick()
         val state = VpnController.connectionState.value
-        if (state == VpnConnectionState.CONNECTED || state == VpnConnectionState.CONNECTING) {
+        val activeStates = setOf(
+            VpnConnectionState.PREPARING,
+            VpnConnectionState.STARTING_ENGINE,
+            VpnConnectionState.CONNECTING,
+            VpnConnectionState.VERIFYING,
+            VpnConnectionState.CONNECTED,
+            VpnConnectionState.RECONNECTING
+        )
+        if (state in activeStates) {
             val stopIntent = Intent(this, MaxNetVpnService::class.java).apply {
                 action = MaxNetVpnService.ACTION_DISCONNECT
             }

@@ -130,17 +130,23 @@ fun DiagnosticsScreen(
             Column(modifier = Modifier.padding(16.dp)) {
                 DiagnosticRow("Connection State", snapshot.connectionState.name)
                 DiagnosticRow("Selected Engine", snapshot.activeEngine.displayName)
+                DiagnosticRow("Native Core Version", snapshot.engineVersion)
                 DiagnosticRow("Selected Profile", snapshot.activeProfileRemarks)
                 DiagnosticRow("Core Initialized", snapshot.coreInitialized.toString())
                 DiagnosticRow("TUN Interface Active", snapshot.tunInterfaceActive.toString())
+                DiagnosticRow("HevSocks5Tunnel Active", snapshot.tunForwarderActive.toString())
                 DiagnosticRow(
                     "Local Loopback SOCKS5",
                     snapshot.localLoopbackPort?.let { "127.0.0.1:$it" } ?: "Inactive"
                 )
+                DiagnosticRow(
+                    "Verified Proxy Delay",
+                    snapshot.verifiedProxyLatencyMs?.let { "${it} ms (HTTP 204)" } ?: "N/A"
+                )
                 DiagnosticRow("Last Error", snapshot.lastError ?: "None")
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = stringResource(R.string.bridge_architecture_note),
+                    text = snapshot.bridgeArchitectureStatus,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
