@@ -1,0 +1,10 @@
+{
+  "name": "MAXNET5G VPN",
+  "description": "Production-grade dual-engine Android VPN client with VLESS, VMess, Trojan, Shadowsocks, Xray-core & sing-box architecture, subscription manager, split tunneling, and bilingual Persian/English RTL/LTR support.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

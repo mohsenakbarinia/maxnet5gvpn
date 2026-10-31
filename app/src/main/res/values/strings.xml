@@ -1,0 +1,158 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">MAXNET5G VPN</string>
+    <string name="app_tagline">Dual-Engine Encrypted Tunnel Client</string>
+
+    <!-- Navigation & Screens -->
+    <string name="nav_home">Home</string>
+    <string name="nav_profiles">Profiles</string>
+    <string name="nav_subscriptions">Subscriptions</string>
+    <string name="nav_routing">Routing &amp; DNS</string>
+    <string name="nav_diagnostics">Diagnostics</string>
+    <string name="nav_settings">Settings</string>
+
+    <!-- Onboarding -->
+    <string name="onboarding_title">Welcome to MAXNET5G VPN</string>
+    <string name="onboarding_subtitle">Personal, zero-telemetry dual-engine VPN client supporting VLESS, VMess, Trojan, Shadowsocks, Hysteria2, and WireGuard.</string>
+    <string name="onboarding_feature_privacy">Self-Hosted &amp; Private: Operates exclusively with your own server configurations or subscriptions.</string>
+    <string name="onboarding_feature_engines">Dual Engine Architecture: Xray-core &amp; sing-box configuration builders with real TCP/Proxy delay verification.</string>
+    <string name="onboarding_feature_bilingual">First-Class Bilingual UX: Complete English (LTR) &amp; Persian (RTL) localization with Vazirmatn typography.</string>
+    <string name="onboarding_get_started">Get Started</string>
+
+    <!-- Connection States -->
+    <string name="state_disconnected">Disconnected</string>
+    <string name="state_connecting">Connecting…</string>
+    <string name="state_connected">Connected</string>
+    <string name="state_reconnecting">Reconnecting…</string>
+    <string name="state_disconnecting">Disconnecting…</string>
+    <string name="state_error">Connection Error</string>
+
+    <!-- Home Screen -->
+    <string name="tap_to_connect">Tap to Connect</string>
+    <string name="tap_to_disconnect">Tap to Disconnect</string>
+    <string name="no_profile_selected">No Profile Selected</string>
+    <string name="select_or_import_profile">Select or import a server configuration to begin</string>
+    <string name="upload_speed">Upload</string>
+    <string name="download_speed">Download</string>
+    <string name="session_duration">Session Time</string>
+    <string name="session_traffic">Session Data</string>
+    <string name="latency_label">Latency</string>
+    <string name="latency_untested">Not tested</string>
+    <string name="latency_testing">Testing…</string>
+    <string name="latency_timeout">Timeout / Unreachable</string>
+    <string name="stat_unavailable">Unavailable</string>
+    <string name="routing_mode_global">Global</string>
+    <string name="routing_mode_rule">Rule-Based</string>
+    <string name="routing_mode_direct">Direct</string>
+    <string name="active_engine_label">Active Engine</string>
+    <string name="test_latency_btn">Test Delay</string>
+    <string name="auto_select_best">Best Server</string>
+
+    <!-- Profiles & Import -->
+    <string name="profiles_title">Server Profiles</string>
+    <string name="search_profiles_hint">Search by name, host, protocol, group…</string>
+    <string name="import_config">Import Config</string>
+    <string name="new_manual_profile">Manual Profile</string>
+    <string name="test_all_profiles">Test All</string>
+    <string name="cancel_testing">Cancel Test</string>
+    <string name="sort_by">Sort</string>
+    <string name="filter_all">All</string>
+    <string name="import_clipboard">Import from Clipboard</string>
+    <string name="import_paste_links">Paste Config URI / JSON</string>
+    <string name="import_qr_camera">Scan QR via Camera</string>
+    <string name="import_qr_gallery">Import QR from Gallery</string>
+    <string name="import_file">Import Config File</string>
+    <string name="export_share_uri">Copy Share URI</string>
+    <string name="export_xray_json">View / Copy Core JSON</string>
+    <string name="duplicate_profile">Duplicate</string>
+    <string name="delete_profile">Delete</string>
+    <string name="edit_profile">Edit Profile</string>
+    <string name="pin_profile">Pin to Top</string>
+    <string name="favorite_profile">Favorite</string>
+    <string name="bulk_delete">Delete Selected</string>
+    <string name="empty_profiles_message">No server profiles configured yet. Import a VLESS, VMess, Trojan, or Shadowsocks URI, scan a QR code, or create a manual configuration.</string>
+
+    <!-- Manual Profile Editor -->
+    <string name="editor_title_new">New Server Configuration</string>
+    <string name="editor_title_edit">Edit Server Configuration</string>
+    <string name="field_remarks">Profile Name (Remarks)</string>
+    <string name="field_group">Profile Group</string>
+    <string name="field_protocol">Protocol</string>
+    <string name="field_address">Server Address (IPv4 / IPv6 / Domain)</string>
+    <string name="field_port">Port (1–65535)</string>
+    <string name="field_uuid_password">UUID / Password</string>
+    <string name="field_encryption">Encryption / Security Method</string>
+    <string name="field_alter_id">Alter ID</string>
+    <string name="field_flow">VLESS Flow (e.g. xtls-rprx-vision)</string>
+    <string name="field_network">Transport Network</string>
+    <string name="field_security">Transport Security</string>
+    <string name="field_host">Host Header / Authority</string>
+    <string name="field_path">Path / Service Name</string>
+    <string name="field_sni">TLS SNI (Server Name Indication)</string>
+    <string name="field_alpn">ALPN (comma-separated)</string>
+    <string name="field_fingerprint">TLS uTLS Fingerprint</string>
+    <string name="field_reality_pbk">REALITY Public Key (pbk)</string>
+    <string name="field_reality_sid">REALITY Short ID (sid)</string>
+    <string name="field_reality_spx">REALITY SpiderX (spx)</string>
+    <string name="field_allow_insecure">Allow Insecure TLS Certificates (Not Recommended)</string>
+    <string name="insecure_warning">Warning: Disabling certificate verification exposes traffic to MITM interception.</string>
+    <string name="save_profile">Save Configuration</string>
+    <string name="cancel">Cancel</string>
+    <string name="confirm">Confirm</string>
+
+    <!-- Subscriptions -->
+    <string name="subscriptions_title">Subscription Manager</string>
+    <string name="add_subscription">Add Subscription</string>
+    <string name="refresh_all_subscriptions">Update All</string>
+    <string name="sub_title_hint">Subscription Name</string>
+    <string name="sub_url_hint">HTTPS Subscription URL</string>
+    <string name="sub_auto_update">Background Auto-Update (WorkManager)</string>
+    <string name="sub_last_updated">Last Updated</string>
+    <string name="empty_subscriptions_message">No subscriptions added. Add an HTTPS subscription URL to fetch and sync server groups automatically.</string>
+
+    <!-- Routing, DNS & Split Tunneling -->
+    <string name="routing_dns_title">Routing, DNS &amp; Split Tunneling</string>
+    <string name="bypass_lan">Bypass LAN &amp; Private Subnets</string>
+    <string name="bypass_country_code">Country Bypass Code (GeoIP/GeoSite)</string>
+    <string name="block_ads">Block Ads &amp; Malware Domains (geosite:category-ads-all)</string>
+    <string name="remote_dns">Remote Proxy DNS (DoH / IP)</string>
+    <string name="direct_dns">Direct Bypass DNS</string>
+    <string name="enable_ipv6">Enable IPv6 Tunneling</string>
+    <string name="enable_fakedns">Enable FakeDNS</string>
+    <string name="split_tunneling_title">Per-App VPN Split Tunneling</string>
+    <string name="split_mode_all">All Apps Use VPN</string>
+    <string name="split_mode_allow">Only Selected Apps Use VPN</string>
+    <string name="split_mode_disallow">Selected Apps Bypass VPN</string>
+    <string name="custom_routing_rules">Custom Routing Rules</string>
+    <string name="add_routing_rule">Add Rule</string>
+
+    <!-- Diagnostics & Logs -->
+    <string name="diagnostics_title">Diagnostics &amp; Redacted Logs</string>
+    <string name="export_diagnostics">Export Sanitized Report</string>
+    <string name="clear_logs">Clear Logs</string>
+    <string name="bridge_architecture_note">Engine Bridge Status: Real Android VpnService TUN + Local Loopback SOCKS5 Core Engine Adapter. Notice: Native libv2ray/libsingbox JNI binaries require NDK packaging; local socket relay &amp; TCP/HTTP proxy verifier active.</string>
+
+    <!-- Settings & About -->
+    <string name="settings_title">General Settings &amp; Security</string>
+    <string name="language_label">Application Language</string>
+    <string name="lang_english">English (en-US)</string>
+    <string name="lang_persian">فارسی (fa-IR)</string>
+    <string name="theme_label">Theme Appearance</string>
+    <string name="theme_system">System Default</string>
+    <string name="theme_dark">Dark Slate</string>
+    <string name="theme_amoled">AMOLED Pure Black</string>
+    <string name="theme_light">Clean Light</string>
+    <string name="use_persian_digits">Use Persian Digits &amp; Jalali Dates</string>
+    <string name="font_scale_label">Typography Scale</string>
+    <string name="auto_reconnect">Auto-Reconnect on Network Switch</string>
+    <string name="connect_on_boot">Connect Automatically on Device Boot</string>
+    <string name="always_on_killswitch_guide">System Kill-Switch Guidance: Open Android VPN Settings → Enable \"Always-on VPN\" and \"Block connections without VPN\".</string>
+    <string name="backup_export">Export Encrypted/JSON Backup</string>
+    <string name="backup_restore">Restore Backup</string>
+    <string name="check_updates">Check for Updates</string>
+    <string name="about_privacy_title">About &amp; Privacy Policy</string>
+    <string name="privacy_statement">Zero Telemetry Guarantee: MAXNET5G VPN contains no analytics, no ad SDKs, and no third-party tracking. Network requests occur strictly to user-configured VPN nodes, user-added subscription URLs, or explicit update checks.</string>
+    <string name="vpn_notification_channel">MAXNET5G VPN Service</string>
+    <string name="vpn_notification_connected">Encrypted VPN Tunnel Active</string>
+    <string name="vpn_notification_disconnect">Disconnect</string>
+</resources>

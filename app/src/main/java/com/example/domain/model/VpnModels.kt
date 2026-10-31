@@ -1,0 +1,291 @@
+package com.example.domain.model
+
+enum class VpnProtocol(val displayName: String, val scheme: String) {
+    VLESS("VLESS", "vless"),
+    VMESS("VMess", "vmess"),
+    TROJAN("Trojan", "trojan"),
+    SHADOWSOCKS("Shadowsocks", "ss"),
+    HYSTERIA2("Hysteria2", "hysteria2"),
+    WIREGUARD("WireGuard", "wireguard"),
+    TUIC("TUIC", "tuic");
+
+    companion object {
+        fun fromScheme(scheme: String): VpnProtocol? {
+            return when (scheme.lowercase().trim()) {
+                "vless" -> VLESS
+                "vmess" -> VMESS
+                "trojan" -> TROJAN
+                "ss", "shadowsocks" -> SHADOWSOCKS
+                "hysteria2", "hy2" -> HYSTERIA2
+                "wireguard", "wg" -> WIREGUARD
+                "tuic" -> TUIC
+                else -> null
+            }
+        }
+    }
+}
+
+enum class TransportType(val wireName: String, val displayName: String) {
+    TCP("tcp", "TCP"),
+    WS("ws", "WebSocket"),
+    GRPC("grpc", "gRPC"),
+    H2("h2", "HTTP/2"),
+    HTTPUPGRADE("httpupgrade", "HTTPUpgrade"),
+    XHTTP("xhttp", "XHTTP / SplitHTTP"),
+    MKCP("kcp", "mKCP"),
+    QUIC("quic", "QUIC");
+
+    companion object {
+        fun fromWire(value: String?): TransportType {
+            return when (value?.lowercase()?.trim()) {
+                "ws", "websocket" -> WS
+                "grpc", "gun" -> GRPC
+                "h2", "http", "http2" -> H2
+                "httpupgrade" -> HTTPUPGRADE
+                "xhttp", "splithttp" -> XHTTP
+                "kcp", "mkcp" -> MKCP
+                "quic" -> QUIC
+                else -> TCP
+            }
+        }
+    }
+}
+
+enum class SecurityType(val wireName: String, val displayName: String) {
+    NONE("none", "None"),
+    TLS("tls", "TLS"),
+    REALITY("reality", "REALITY");
+
+    companion object {
+        fun fromWire(value: String?): SecurityType {
+            return when (value?.lowercase()?.trim()) {
+                "tls", "xtls" -> TLS
+                "reality" -> REALITY
+                else -> NONE
+            }
+        }
+    }
+}
+
+enum class EngineType(val id: String, val displayName: String) {
+    XRAY_CORE("xray", "Xray-core (Primary)"),
+    SING_BOX("sing-box", "sing-box (Universal)")
+}
+
+enum class RoutingMode(val id: String) {
+    GLOBAL("global"),
+    RULE_BASED("rule_based"),
+    DIRECT("direct")
+}
+
+enum class SplitTunnelMode(val id: String) {
+    ALL_APPS("all"),
+    ALLOW_SELECTED("allow_selected"),
+    DISALLOW_SELECTED("disallow_selected")
+}
+
+enum class VpnConnectionState {
+    DISCONNECTED,
+    CONNECTING,
+    CONNECTED,
+    RECONNECTING,
+    DISCONNECTING,
+    ERROR
+}
+
+enum class LatencyMeasureType(val label: String) {
+    UNTESTED("Untested"),
+    TCP_HANDSHAKE("TCP Handshake"),
+    PROXY_HTTP_DELAY("Proxy 204 Delay"),
+    TIMEOUT("Timeout")
+}
+
+enum class ThemePreference {
+    SYSTEM,
+    DARK,
+    AMOLED,
+    LIGHT
+}
+
+data class ServerProfile(
+    val id: Long = 0L,
+    val remarks: String,
+    val groupName: String = "Default",
+    val subscriptionId: Long? = null,
+    val protocol: VpnProtocol = VpnProtocol.VLESS,
+    val address: String,
+    val port: Int,
+    val credential: String, // UUID for VLESS/VMess/TUIC, Password for Trojan/SS/Hysteria2, PrivateKey for WG
+    val encryption: String = "none", // e.g. none, auto, aes-128-gcm, chacha20-ietf-poly1305, 2022-blake3-aes-128-gcm
+    val alterId: Int = 0,
+    val flow: String = "", // e.g. xtls-rprx-vision
+    val network: TransportType = TransportType.TCP,
+    val headerType: String = "none",
+    val host: String = "",
+    val path: String = "",
+    val serviceName: String = "",
+    val security: SecurityType = SecurityType.NONE,
+    val sni: String = "",
+    val alpn: String = "",
+    val fingerprint: String = "chrome",
+    val realityPublicKey: String = "",
+    val realityShortId: String = "",
+    val realitySpiderX: String = "",
+    val wireGuardPublicKey: String = "",
+    val wireGuardReserved: String = "",
+    val wireGuardLocalAddress: String = "172.16.0.2/32",
+    val allowInsecure: Boolean = false,
+    val isFavorite: Boolean = false,
+    val isPinned: Boolean = false,
+    val sortOrder: Int = 0,
+    val lastLatencyMs: Long? = null,
+    val latencyType: LatencyMeasureType = LatencyMeasureType.UNTESTED,
+    val createdAt: Long = System.currentTimeMillis()
+) {
+    fun uniqueFingerprintKey(): String {
+        return "${protocol.name}|${address.lowercase()}|$port|${credential.take(12)}|${network.wireName}|${security.wireName}|$path|$sni|$realityPublicKey"
+    }
+}
+
+data class SubscriptionItem(
+    val id: Long = 0L,
+    val title: String,
+    val url: String,
+    val enabledAutoUpdate: Boolean = true,
+    val updateIntervalHours: Int = 24,
+    val lastUpdatedAt: Long? = null,
+    val lastStatus: String = "Never updated",
+    val uploadBytes: Long? = null,
+    val downloadBytes: Long? = null,
+    val totalBytes: Long? = null,
+    val expireTimestampSec: Long? = null,
+    val supportUrl: String = "",
+    val webPageUrl: String = "",
+    val announcement: String = "",
+    val profileCount: Int = 0
+)
+
+enum class RoutingRuleType(val displayName: String) {
+    DOMAIN("Domain / Suffix"),
+    IP_CIDR("IP / CIDR"),
+    GEOIP("GeoIP Code"),
+    GEOSITE("GeoSite Category")
+}
+
+enum class OutboundTag(val wireTag: String, val displayName: String) {
+    PROXY("proxy", "Proxy (VPN)"),
+    DIRECT("direct", "Direct (Bypass)"),
+    BLOCK("block", "Block (Reject)")
+}
+
+data class RoutingRuleItem(
+    val id: Long = 0L,
+    val name: String,
+    val type: RoutingRuleType,
+    val value: String,
+    val outboundTag: OutboundTag,
+    val isEnabled: Boolean = true
+)
+
+data class ConnectionHistoryItem(
+    val id: Long = 0L,
+    val profileName: String,
+    val protocol: String,
+    val engine: String,
+    val connectedAt: Long,
+    val disconnectedAt: Long?,
+    val uploadBytes: Long,
+    val downloadBytes: Long,
+    val statusNote: String
+)
+
+data class AppSettings(
+    val selectedProfileId: Long? = null,
+    val activeEngine: EngineType = EngineType.XRAY_CORE,
+    val routingMode: RoutingMode = RoutingMode.RULE_BASED,
+    val bypassLan: Boolean = true,
+    val bypassCountryCode: String = "IR",
+    val blockAds: Boolean = false,
+    val remoteDns: String = "https://1.1.1.1/dns-query",
+    val directDns: String = "1.1.1.1",
+    val dnsQueryStrategy: String = "UseIPv4",
+    val enableIpv6: Boolean = false,
+    val enableFakeDns: Boolean = false,
+    val mtu: Int = 1500,
+    val splitTunnelMode: SplitTunnelMode = SplitTunnelMode.ALL_APPS,
+    val splitTunnelPackages: Set<String> = emptySet(),
+    val languageCode: String = "en-US",
+    val themePreference: ThemePreference = ThemePreference.DARK,
+    val usePersianDigits: Boolean = false,
+    val fontScale: Float = 1.0f,
+    val autoReconnect: Boolean = true,
+    val connectOnBoot: Boolean = false,
+    val onboardingCompleted: Boolean = false
+)
+
+data class EngineStatistics(
+    val uploadSpeedBps: Long = 0L,
+    val downloadSpeedBps: Long = 0L,
+    val sessionUploadBytes: Long = 0L,
+    val sessionDownloadBytes: Long = 0L,
+    val totalUploadBytes: Long = 0L,
+    val totalDownloadBytes: Long = 0L,
+    val connectedSinceMs: Long? = null,
+    val localSocksPort: Int? = null,
+    val isTelemetryAuthentic: Boolean = true
+)
+
+data class ValidationResult(
+    val isValid: Boolean,
+    val errors: List<String> = emptyList(),
+    val warnings: List<String> = emptyList(),
+    val generatedConfigJson: String = ""
+)
+
+data class DiagnosticSnapshot(
+    val connectionState: VpnConnectionState = VpnConnectionState.DISCONNECTED,
+    val activeEngine: EngineType = EngineType.XRAY_CORE,
+    val activeProfileRemarks: String = "None",
+    val coreInitialized: Boolean = false,
+    val tunInterfaceActive: Boolean = false,
+    val localLoopbackPort: Int? = null,
+    val bridgeArchitectureStatus: String = "Android VpnService TUN + Local Loopback SOCKS5 (127.0.0.1)",
+    val lastError: String? = null
+)
+
+data class RedactedLogEntry(
+    val id: Long = System.nanoTime(),
+    val timestampMs: Long = System.currentTimeMillis(),
+    val level: String,
+    val tag: String,
+    val message: String
+)
+
+data class BrandingConfig(
+    val appName: String = "MAXNET5G VPN",
+    val appId: String = "com.aistudio.maxnet5gvpn.qxkrzp",
+    val urlScheme: String = "maxnet5g",
+    val primaryColorHex: String = "#00E5FF",
+    val accentColorHex: String = "#00E676",
+    val defaultLanguage: String = "en-US",
+    val defaultTheme: String = "DARK",
+    val supportUrl: String = "https://maxnet5g.example.com/support",
+    val privacyPolicyUrl: String = "https://maxnet5g.example.com/privacy",
+    val termsUrl: String = "https://maxnet5g.example.com/terms",
+    val updateManifestUrl: String = "https://maxnet5g.example.com/updates/manifest.json",
+    val lockedMode: Boolean = false
+)
+
+data class UpdateManifest(
+    val latestVersion: String,
+    val minVersion: String,
+    val apkUrl: String,
+    val changelog: String,
+    val sha256: String
+)
+
+data class InstalledAppInfo(
+    val packageName: String,
+    val appName: String,
+    val isSystemApp: Boolean
+)

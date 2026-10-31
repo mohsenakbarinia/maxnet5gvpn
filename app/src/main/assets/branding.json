@@ -1,0 +1,31 @@
+{
+  "appName": "MAXNET5G VPN",
+  "appId": "com.aistudio.maxnet5gvpn.qxkrzp",
+  "urlScheme": "maxnet5g",
+  "primaryColorHex": "#00E5FF",
+  "accentColorHex": "#00E676",
+  "backgroundDarkHex": "#070D19",
+  "surfaceDarkHex": "#101B2E",
+  "logoResource": "ic_launcher_foreground",
+  "adaptiveIconResource": "ic_launcher",
+  "splashScreenEnabled": true,
+  "defaultLanguage": "en-US",
+  "defaultTheme": "DARK",
+  "supportUrl": "https://maxnet5g.example.com/support",
+  "privacyPolicyUrl": "https://maxnet5g.example.com/privacy",
+  "termsUrl": "https://maxnet5g.example.com/terms",
+  "defaultSubscriptionUrl": "",
+  "lockedMode": false,
+  "updateManifestUrl": "https://maxnet5g.example.com/updates/manifest.json",
+  "featureFlags": {
+    "enableXrayEngine": true,
+    "enableSingBoxEngine": true,
+    "enableSubscriptions": true,
+    "enableSplitTunneling": true,
+    "enableCustomRouting": true,
+    "enableDnsSettings": true,
+    "enableDiagnostics": true,
+    "enableUpdateChecker": true,
+    "enableQrScanner": true
+  }
+}

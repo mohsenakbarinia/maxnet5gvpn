@@ -1,0 +1,158 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">MAXNET5G VPN</string>
+    <string name="app_tagline">کلاینت تونل رمزنگاری‌شده دو موتوره</string>
+
+    <!-- Navigation & Screens -->
+    <string name="nav_home">خانه</string>
+    <string name="nav_profiles">پروفایل‌ها</string>
+    <string name="nav_subscriptions">اشتراک‌ها</string>
+    <string name="nav_routing">مسیریابی و DNS</string>
+    <string name="nav_diagnostics">عیب‌یابی</string>
+    <string name="nav_settings">تنظیمات</string>
+
+    <!-- Onboarding -->
+    <string name="onboarding_title">به MAXNET5G VPN خوش آمدید</string>
+    <string name="onboarding_subtitle">کلاینت شخصی و بدون ردیابی با پشتیبانی از VLESS، VMess، Trojan، Shadowsocks، Hysteria2 و WireGuard.</string>
+    <string name="onboarding_feature_privacy">خصوصی و مستقل: فقط با سرورها و اشتراک‌های شخصی شما کار می‌کند و هیچ سرور پیش‌فرضی ندارد.</string>
+    <string name="onboarding_feature_engines">معماری دو موتوره: تولید پیکربندی استاندارد Xray-core و sing-box همراه با تست واقعی پینگ.</string>
+    <string name="onboarding_feature_bilingual">پشتیبانی کامل از فارسی (راست‌به‌چپ) و انگلیسی با فونت وزیرمتن.</string>
+    <string name="onboarding_get_started">شروع استفاده</string>
+
+    <!-- Connection States -->
+    <string name="state_disconnected">قطع شده</string>
+    <string name="state_connecting">در حال اتصال…</string>
+    <string name="state_connected">متصل</string>
+    <string name="state_reconnecting">در حال اتصال مجدد…</string>
+    <string name="state_disconnecting">در حال قطع اتصال…</string>
+    <string name="state_error">خطا در اتصال</string>
+
+    <!-- Home Screen -->
+    <string name="tap_to_connect">برای اتصال لمس کنید</string>
+    <string name="tap_to_disconnect">برای قطع اتصال لمس کنید</string>
+    <string name="no_profile_selected">سروری انتخاب نشده است</string>
+    <string name="select_or_import_profile">یک پروفایل انتخاب یا وارد کنید</string>
+    <string name="upload_speed">آپلود</string>
+    <string name="download_speed">دانلود</string>
+    <string name="session_duration">مدت زمان نشست</string>
+    <string name="session_traffic">مصرف نشست</string>
+    <string name="latency_label">پینگ و تاخیر</string>
+    <string name="latency_untested">تست نشده</string>
+    <string name="latency_testing">در حال بررسی…</string>
+    <string name="latency_timeout">عدم پاسخ / تایم‌اوت</string>
+    <string name="stat_unavailable">نامشخص</string>
+    <string name="routing_mode_global">سراسری (Global)</string>
+    <string name="routing_mode_rule">مبتنی بر قانون</string>
+    <string name="routing_mode_direct">مستقیم (Direct)</string>
+    <string name="active_engine_label">موتور هسته</string>
+    <string name="test_latency_btn">تست تاخیر</string>
+    <string name="auto_select_best">بهترین سرور</string>
+
+    <!-- Profiles & Import -->
+    <string name="profiles_title">پروفایل‌های سرور</string>
+    <string name="search_profiles_hint">جستجو بر اساس نام، آدرس، پروتکل یا گروه…</string>
+    <string name="import_config">افزودن کانفیگ</string>
+    <string name="new_manual_profile">ساخت دستی</string>
+    <string name="test_all_profiles">تست همه</string>
+    <string name="cancel_testing">لغو تست</string>
+    <string name="sort_by">مرتب‌سازی</string>
+    <string name="filter_all">همه</string>
+    <string name="import_clipboard">افزودن از کلیپ‌بورد</string>
+    <string name="import_paste_links">جای‌گذاری لینک یا JSON</string>
+    <string name="import_qr_camera">اسکن QR با دوربین</string>
+    <string name="import_qr_gallery">انتخاب تصویر QR از گالری</string>
+    <string name="import_file">بارگذاری فایل کانفیگ</string>
+    <string name="export_share_uri">کپی لینک اشتراک‌گذاری</string>
+    <string name="export_xray_json">مشاهده / کپی JSON هسته</string>
+    <string name="duplicate_profile">تکثیر پروفایل</string>
+    <string name="delete_profile">حذف</string>
+    <string name="edit_profile">ویرایش پروفایل</string>
+    <string name="pin_profile">سنجاق به بالا</string>
+    <string name="favorite_profile">علاقه‌مندی</string>
+    <string name="bulk_delete">حذف موارد انتخابی</string>
+    <string name="empty_profiles_message">هنوز پروفایلی ثبت نشده است. لینک VLESS، VMess، Trojan یا Shadowsocks را وارد کنید یا به صورت دستی بسازید.</string>
+
+    <!-- Manual Profile Editor -->
+    <string name="editor_title_new">پیکربندی سرور جدید</string>
+    <string name="editor_title_edit">ویرایش پیکربندی سرور</string>
+    <string name="field_remarks">نام پروفایل (Remarks)</string>
+    <string name="field_group">گروه پروفایل</string>
+    <string name="field_protocol">پروتکل</string>
+    <string name="field_address">آدرس سرور (IPv4 / IPv6 / دامنه)</string>
+    <string name="field_port">پورت (۱ تا ۶۵۵۳۵)</string>
+    <string name="field_uuid_password">شناسه UUID / رمز عبور</string>
+    <string name="field_encryption">روش رمزنگاری</string>
+    <string name="field_alter_id">Alter ID</string>
+    <string name="field_flow">VLESS Flow (مانند xtls-rprx-vision)</string>
+    <string name="field_network">نوع انتقال (Transport)</string>
+    <string name="field_security">امنیت لایه انتقال</string>
+    <string name="field_host">هدر Host / Authority</string>
+    <string name="field_path">مسیر Path / نام سرویس gRPC</string>
+    <string name="field_sni">دامنه TLS SNI</string>
+    <string name="field_alpn">ALPN (با کاما جدا شود)</string>
+    <string name="field_fingerprint">اثرانگشت uTLS Fingerprint</string>
+    <string name="field_reality_pbk">کلید عمومی REALITY (pbk)</string>
+    <string name="field_reality_sid">شناسه کوتاه REALITY (sid)</string>
+    <string name="field_reality_spx">مسیر REALITY SpiderX (spx)</string>
+    <string name="field_allow_insecure">پذیرش گواهی TLS نامعتبر (توصیه نمی‌شود)</string>
+    <string name="insecure_warning">هشدار امنیتی: غیرفعال کردن بررسی گواهی TLS خطر شنود ترافیک (MITM) را به همراه دارد.</string>
+    <string name="save_profile">ذخیره پیکربندی</string>
+    <string name="cancel">انصراف</string>
+    <string name="confirm">تایید</string>
+
+    <!-- Subscriptions -->
+    <string name="subscriptions_title">مدیریت اشتراک‌ها</string>
+    <string name="add_subscription">افزودن اشتراک</string>
+    <string name="refresh_all_subscriptions">بروزرسانی همه</string>
+    <string name="sub_title_hint">عنوان اشتراک</string>
+    <string name="sub_url_hint">لینک اشتراک HTTPS</string>
+    <string name="sub_auto_update">بروزرسانی خودکار در پس‌زمینه</string>
+    <string name="sub_last_updated">آخرین بروزرسانی</string>
+    <string name="empty_subscriptions_message">هیچ لینک اشتراکی ثبت نشده است. با افزودن لینک HTTPS، لیست سرورهای خود را همگام‌سازی کنید.</string>
+
+    <!-- Routing, DNS & Split Tunneling -->
+    <string name="routing_dns_title">مسیریابی، DNS و تفکیک برنامه‌ها</string>
+    <string name="bypass_lan">عبور مستقیم شبکه محلی (LAN)</string>
+    <string name="bypass_country_code">کد کشور برای عبور مستقیم (مثلا IR)</string>
+    <string name="block_ads">مسدودسازی تبلیغات و بدافزارها</string>
+    <string name="remote_dns">سرور DNS راه دور (DoH / IP)</string>
+    <string name="direct_dns">سرور DNS مستقیم</string>
+    <string name="enable_ipv6">فعال‌سازی مسیریابی IPv6</string>
+    <string name="enable_fakedns">فعال‌سازی FakeDNS</string>
+    <string name="split_tunneling_title">تفکیک برنامه‌ها (Per-App VPN)</string>
+    <string name="split_mode_all">همه برنامه‌ها از VPN عبور کنند</string>
+    <string name="split_mode_allow">فقط برنامه‌های انتخابی از VPN عبور کنند</string>
+    <string name="split_mode_disallow">برنامه‌های انتخابی بدون VPN باشند</string>
+    <string name="custom_routing_rules">قوانین مسیریابی سفارشی</string>
+    <string name="add_routing_rule">افزودن قانون</string>
+
+    <!-- Diagnostics & Logs -->
+    <string name="diagnostics_title">عیب‌یابی و گزارش‌های امن‌شده</string>
+    <string name="export_diagnostics">خروجی گزارش بدون اطلاعات حساس</string>
+    <string name="clear_logs">پاکسازی گزارش‌ها</string>
+    <string name="bridge_architecture_note">وضعیت موتور و پل شبکه: سرویس VpnService اندروید و آداپتور محلی SOCKS5 فعال است. توجه: باینری‌های بومی JNI نیازمند کامپایل NDK هستند؛ اعتبارسنجی کانفیگ و تست واقعی تاخیر TCP/Proxy فعال است.</string>
+
+    <!-- Settings & About -->
+    <string name="settings_title">تنظیمات عمومی و امنیت</string>
+    <string name="language_label">زبان برنامه</string>
+    <string name="lang_english">English (en-US)</string>
+    <string name="lang_persian">فارسی (fa-IR)</string>
+    <string name="theme_label">پوسته ظاهری</string>
+    <string name="theme_system">پیش‌فرض سیستم</string>
+    <string name="theme_dark">تیره مدرن</string>
+    <string name="theme_amoled">مشکی کامل AMOLED</string>
+    <string name="theme_light">روشن</string>
+    <string name="use_persian_digits">نمایش ارقام فارسی و تاریخ جلالی</string>
+    <string name="font_scale_label">اندازه نوشته‌ها</string>
+    <string name="auto_reconnect">اتصال مجدد خودکار هنگام تغییر شبکه</string>
+    <string name="connect_on_boot">اتصال خودکار پس از راه‌اندازی دستگاه</string>
+    <string name="always_on_killswitch_guide">راهنمای Kill-Switch سیستمی: در تنظیمات VPN اندروید گزینه «VPN همیشه روشن» و «مسدود کردن اتصالات بدون VPN» را فعال نمایید.</string>
+    <string name="backup_export">تهیه نسخه پشتیبان</string>
+    <string name="backup_restore">بازیابی نسخه پشتیبان</string>
+    <string name="check_updates">بررسی بروزرسانی برنامه</string>
+    <string name="about_privacy_title">درباره برنامه و حریم خصوصی</string>
+    <string name="privacy_statement">تضمین عدم ردیابی: MAXNET5G VPN فاقد هرگونه کتابخانه تبلیغاتی، آنالیتیکس یا تله‌متری است. ارتباطات شبکه صرفا با سرورهای واردشده توسط کاربر انجام می‌شود.</string>
+    <string name="vpn_notification_channel">سرویس MAXNET5G VPN</string>
+    <string name="vpn_notification_connected">تونل رمزنگاری‌شده فعال است</string>
+    <string name="vpn_notification_disconnect">قطع اتصال</string>
+</resources>
