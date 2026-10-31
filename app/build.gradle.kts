@@ -63,6 +63,17 @@ android {
     compose = true
     buildConfig = true
   }
+  packaging {
+    jniLibs {
+      useLegacyPackaging = true
+    }
+    resources {
+      excludes += "/META-INF/{AL2.0,LGPL2.1}"
+      excludes += "/META-INF/*.version"
+      excludes += "/META-INF/**/LICENSE.txt"
+      excludes += "/META-INF/com/android/build/gradle/app-metadata.properties"
+    }
+  }
   testOptions { unitTests { isIncludeAndroidResources = true } }
   dependenciesInfo {
     includeInApk = false
@@ -87,10 +98,10 @@ dependencies {
   // implementation(platform(libs.firebase.bom))
   // implementation(libs.accompanist.permissions)
   implementation(libs.androidx.activity.compose)
-  implementation(libs.androidx.camera.camera2)
-  implementation(libs.androidx.camera.core)
-  implementation(libs.androidx.camera.lifecycle)
-  implementation(libs.androidx.camera.view)
+  // implementation(libs.androidx.camera.camera2)
+  // implementation(libs.androidx.camera.core)
+  // implementation(libs.androidx.camera.lifecycle)
+  // implementation(libs.androidx.camera.view)
   implementation(libs.androidx.compose.material.icons.core)
   implementation(libs.androidx.compose.material.icons.extended)
   implementation(libs.androidx.compose.material3)
@@ -102,7 +113,7 @@ dependencies {
   implementation(libs.androidx.lifecycle.runtime.compose)
   implementation(libs.androidx.lifecycle.runtime.ktx)
   implementation(libs.androidx.lifecycle.viewmodel.compose)
-  implementation(libs.androidx.navigation.compose)
+  // implementation(libs.androidx.navigation.compose)
   implementation(libs.androidx.room.ktx)
   implementation(libs.androidx.room.runtime)
   implementation(libs.androidx.work.runtime.ktx)
@@ -124,7 +135,7 @@ dependencies {
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.kotlinx.coroutines.core)
   // implementation(libs.logging.interceptor)
-  implementation(libs.moshi.kotlin)
+  // implementation(libs.moshi.kotlin)
   implementation(libs.okhttp)
   // implementation(libs.play.services.location)
   // implementation(libs.retrofit)
@@ -142,5 +153,7 @@ dependencies {
   debugImplementation(libs.androidx.compose.ui.test.manifest)
   debugImplementation(libs.androidx.compose.ui.tooling)
   "ksp"(libs.androidx.room.compiler)
-  "ksp"(libs.moshi.kotlin.codegen)
+  // "ksp"(libs.moshi.kotlin.codegen)
 }
+
+

@@ -1,0 +1,65 @@
+================================================================
+MAXNET5G VPN - COMPLETE APK BUILD & VALIDATION REPORT
+================================================================
+
+--- [RELEASE APK: MAXNET5G-VPN-release.apk] ---
+File Path          : /app/applet/app/build/outputs/apk/release/MAXNET5G-VPN-release.apk
+File Size          : 18,886,819 bytes (18.01 MB)
+SHA-256 Checksum   : b99b912d73b549986704a5b3aa3c9c1f50ce0aa8146cc8ac5391afdf2bc42e77
+ZIP Integrity      : PASSED (0 corrupt entries across 100 archive entries)
+META-INF Entries   : ['META-INF/com/android/build/gradle/app-metadata.properties', 'META-INF/services/kotlinx.coroutines.CoroutineExceptionHandler', 'META-INF/services/kotlinx.coroutines.internal.MainDispatcherFactory', 'META-INF/ANDROIDD.SF', 'META-INF/ANDROIDD.RSA', 'META-INF/MANIFEST.MF']
+Package Metadata   : package: name='com.aistudio.maxnet5gvpn.qxkrzp' versionCode='1' versionName='1.0.0' platformBuildVersionName='16' platformBuildVersionCode='36' compileSdkVersion='36' compileSdkVersionCodename='16'
+Min SDK Version    : minSdkVersion:'24'
+Target SDK Version : targetSdkVersion:'36'
+Supported ABIs     : native-code: 'arm64-v8a' 'armeabi-v7a' 'x86' 'x86_64'
+Native .so Files   : ['lib/arm64-v8a/libandroidx.graphics.path.so', 'lib/arm64-v8a/libdatastore_shared_counter.so', 'lib/armeabi-v7a/libandroidx.graphics.path.so', 'lib/armeabi-v7a/libdatastore_shared_counter.so', 'lib/x86/libandroidx.graphics.path.so', 'lib/x86/libdatastore_shared_counter.so', 'lib/x86_64/libandroidx.graphics.path.so', 'lib/x86_64/libdatastore_shared_counter.so']
+zipalign Check     : PASSED (Verification successful)
+aapt2 xmltree      : PASSED (250 manifest nodes verified)
+apksigner Check    :
+Verifies
+Verified using v1 scheme (JAR signing): true
+Verified using v2 scheme (APK Signature Scheme v2): true
+Verified using v3 scheme (APK Signature Scheme v3): true
+Verified using v3.1 scheme (APK Signature Scheme v3.1): false
+Verified using v4 scheme (APK Signature Scheme v4): false
+Verified for SourceStamp: false
+Number of signers: 1
+Signer #1 certificate DN: CN=Android Debug, O=Android, C=US
+Signer #1 certificate SHA-256 digest: a4e2879129d656ded0ab4e307556c946700a879b4b0fff4a626850fbfbd303f9
+Signer #1 certificate SHA-1 digest: 970a97e2bfe15138b353fccb46941db09c678bfa
+Signer #1 certificate MD5 digest: 935ffe9bfc265abd8bf020990542e072
+Signer #1 key algorithm: RSA
+Signer #1 key size (bits): 2048
+Signer #1 public key SHA-256 digest: 3b0544eef8ab5bdf9bd25d6f73bf968b414752fa839daeef7f752f2ecd01da0d
+Signer #1 public key SHA-1 digest: a1a5b286345a794ea511a686b5ac9ffffbaf83b3
+
+--- [DEBUG APK: MAXNET5G-VPN-debug.apk] ---
+File Path          : /app/applet/app/build/outputs/apk/debug/MAXNET5G-VPN-debug.apk
+File Size          : 18,886,819 bytes (18.01 MB)
+SHA-256 Checksum   : b99b912d73b549986704a5b3aa3c9c1f50ce0aa8146cc8ac5391afdf2bc42e77
+ZIP Integrity      : PASSED (0 corrupt entries across 100 archive entries)
+META-INF Entries   : ['META-INF/com/android/build/gradle/app-metadata.properties', 'META-INF/services/kotlinx.coroutines.CoroutineExceptionHandler', 'META-INF/services/kotlinx.coroutines.internal.MainDispatcherFactory', 'META-INF/ANDROIDD.SF', 'META-INF/ANDROIDD.RSA', 'META-INF/MANIFEST.MF']
+Package Metadata   : package: name='com.aistudio.maxnet5gvpn.qxkrzp' versionCode='1' versionName='1.0.0' platformBuildVersionName='16' platformBuildVersionCode='36' compileSdkVersion='36' compileSdkVersionCodename='16'
+Min SDK Version    : minSdkVersion:'24'
+Target SDK Version : targetSdkVersion:'36'
+Supported ABIs     : native-code: 'arm64-v8a' 'armeabi-v7a' 'x86' 'x86_64'
+Native .so Files   : ['lib/arm64-v8a/libandroidx.graphics.path.so', 'lib/arm64-v8a/libdatastore_shared_counter.so', 'lib/armeabi-v7a/libandroidx.graphics.path.so', 'lib/armeabi-v7a/libdatastore_shared_counter.so', 'lib/x86/libandroidx.graphics.path.so', 'lib/x86/libdatastore_shared_counter.so', 'lib/x86_64/libandroidx.graphics.path.so', 'lib/x86_64/libdatastore_shared_counter.so']
+zipalign Check     : PASSED (Verification successful)
+aapt2 xmltree      : PASSED (250 manifest nodes verified)
+apksigner Check    :
+Verifies
+Verified using v1 scheme (JAR signing): true
+Verified using v2 scheme (APK Signature Scheme v2): true
+Verified using v3 scheme (APK Signature Scheme v3): true
+Verified using v3.1 scheme (APK Signature Scheme v3.1): false
+Verified using v4 scheme (APK Signature Scheme v4): false
+Verified for SourceStamp: false
+Number of signers: 1
+Signer #1 certificate DN: CN=Android Debug, O=Android, C=US
+Signer #1 certificate SHA-256 digest: a4e2879129d656ded0ab4e307556c946700a879b4b0fff4a626850fbfbd303f9
+Signer #1 certificate SHA-1 digest: 970a97e2bfe15138b353fccb46941db09c678bfa
+Signer #1 certificate MD5 digest: 935ffe9bfc265abd8bf020990542e072
+Signer #1 key algorithm: RSA
+Signer #1 key size (bits): 2048
+Signer #1 public key SHA-256 digest: 3b0544eef8ab5bdf9bd25d6f73bf968b414752fa839daeef7f752f2ecd01da0d
+Signer #1 public key SHA-1 digest: a1a5b286345a794ea511a686b5ac9ffffbaf83b3
