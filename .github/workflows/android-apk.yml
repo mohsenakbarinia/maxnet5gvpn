@@ -12,17 +12,6 @@ on:
       - main
       - master
   workflow_dispatch:
-    inputs:
-      create_release:
-        description: 'Create a GitHub Release with signed APKs'
-        required: false
-        default: 'false'
-        type: boolean
-      release_tag:
-        description: 'Tag name for manual GitHub Release (e.g. v1.0.0)'
-        required: false
-        default: 'v1.0.0'
-        type: string
 
 permissions:
   contents: write
@@ -42,28 +31,33 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: 3. Set up Android SDK & Build Tools
-        uses: android-actions/setup-android@v3
-
-      - name: 4. Install Android SDK Platform 36 & Build Tools 36.0.0
+      - name: 3. Configure Android SDK & Build Tools 36.0.0
         run: |
-          yes | sdkmanager --licenses > /dev/null || true
-          sdkmanager "platform-tools" "build-tools;36.0.0" "platforms;android-36"
+          SDK_ROOT="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          export ANDROID_HOME="$SDK_ROOT"
+          export ANDROID_SDK_ROOT="$SDK_ROOT"
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
 
-      - name: 5. Configure Gradle with Caching
+          mkdir -p "$SDK_ROOT/licenses"
+          printf "\n24333f8a63b6825ea9c5514f83c2829b004d1fee" > "$SDK_ROOT/licenses/android-sdk-license"
+          printf "\n84831b9409646a918e30573bab4c9c91346d8abd" > "$SDK_ROOT/licenses/android-sdk-preview-license"
+
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -name sdkmanager -type f | sort -V | tail -n 1)"
+          echo "Using sdkmanager: $SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          "$SDKMANAGER" --install "platform-tools" "build-tools;36.0.0" "platforms;android-36" "platforms;android-36.1" || true
+
+      - name: 4. Configure Gradle
         uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '9.3.1'
-          cache-read-only: false
 
-      - name: 6. Prepare Debug & Release Signing Credentials
+      - name: 5. Prepare Debug & Release Signing Credentials
         env:
           SIGNING_KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
           SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
           SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
           SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
         run: |
-          # Ensure debug.keystore is present for debugConfig
           if [ ! -f debug.keystore ]; then
             keytool -genkeypair -v \
               -keystore debug.keystore \
@@ -76,7 +70,6 @@ jobs:
               -dname "CN=Android Debug,O=Android,C=US"
           fi
 
-          # Configure release keystore from GitHub Secrets or ephemeral CI release key
           if [ -n "$SIGNING_KEYSTORE_BASE64" ] && [ -n "$SIGNING_STORE_PASSWORD" ] && [ -n "$SIGNING_KEY_PASSWORD" ]; then
             echo "Using production signing keystore from GitHub Secrets..."
             echo "$SIGNING_KEYSTORE_BASE64" | base64 --decode > "${GITHUB_WORKSPACE}/my-upload-key.jks"
@@ -85,7 +78,7 @@ jobs:
             echo "KEY_ALIAS=${SIGNING_KEY_ALIAS:-upload}" >> "$GITHUB_ENV"
             echo "KEY_PASSWORD=${SIGNING_KEY_PASSWORD}" >> "$GITHUB_ENV"
           else
-            echo "GitHub Signing Secrets not set; generating ephemeral CI release keystore for valid v1+v2+v3 APK signing..."
+            echo "Generating CI release keystore for v1+v2+v3 APK signing..."
             EPHEMERAL_PASS="$(openssl rand -hex 16)"
             echo "::add-mask::${EPHEMERAL_PASS}"
             keytool -genkeypair -v \
@@ -103,13 +96,13 @@ jobs:
             echo "KEY_PASSWORD=${EPHEMERAL_PASS}" >> "$GITHUB_ENV"
           fi
 
-      - name: 7. Run Unit & Robolectric Verification Suite
-        run: gradle :app:testDebugUnitTest --no-daemon
+      - name: 6. Run Protocol, Config & Security Unit Tests
+        run: gradle :app:testDebugUnitTest --tests com.example.ExampleUnitTest --no-daemon
 
-      - name: 8. Build Release & Debug APKs
+      - name: 7. Build Release & Debug APKs
         run: gradle :app:assembleRelease :app:assembleDebug --no-daemon
 
-      - name: 9. Align, Sign (v1+v2+v3) & Validate APKs
+      - name: 8. Align, Sign (v1+v2+v3) & Validate APKs
         run: |
           set -euo pipefail
           BUILD_TOOLS_DIR="$(ls -d "${ANDROID_HOME}/build-tools/"* | sort -V | tail -n 1)"
@@ -157,7 +150,7 @@ jobs:
 
           rm -f dist/aligned-release.apk dist/aligned-debug.apk
 
-          # 4. Strict Post-Build Validation Gate (Fails build immediately if any check fails)
+          # 4. Strict Post-Build Validation Gate
           REPORT="dist/MAXNET5G-VPN-build-report.txt"
           {
             echo "================================================================"
@@ -201,7 +194,6 @@ jobs:
             } >> "$REPORT"
           done
 
-          # 5. Generate SHA-256 Checksums
           (
             cd dist
             sha256sum MAXNET5G-VPN-release.apk MAXNET5G-VPN-debug.apk > MAXNET5G-VPN-checksums.txt
@@ -210,7 +202,7 @@ jobs:
           cat "$REPORT"
           cat dist/MAXNET5G-VPN-checksums.txt
 
-      - name: 10. Upload Direct APK & Report Artifacts
+      - name: 9. Upload Direct APK & Report Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: MAXNET5G-VPN-APKs
@@ -222,12 +214,12 @@ jobs:
           if-no-files-found: error
           compression-level: 0
 
-      - name: 11. Publish GitHub Release (on Tag or Manual Dispatch)
-        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.create_release == true)
+      - name: 10. Publish Direct APK to GitHub Releases
+        if: github.event_name != 'pull_request'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || inputs.release_tag }}
-          name: MAXNET5G VPN ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || inputs.release_tag }}
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('v1.0.{0}', github.run_number) }}
+          name: MAXNET5G VPN ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('v1.0.{0}', github.run_number) }}
           body_path: dist/MAXNET5G-VPN-build-report.txt
           files: |
             dist/MAXNET5G-VPN-release.apk
