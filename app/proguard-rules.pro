@@ -1,15 +1,28 @@
 # MAXNET5G VPN ProGuard / R8 Security & Serialization Rules
--keepattributes Signature, InnerClasses, EnclosingMethod, RuntimeVisibleAnnotations
+-keepattributes Signature, InnerClasses, EnclosingMethod, RuntimeVisibleAnnotations, *Annotation*
+-dontwarn javax.annotation.**
+-dontwarn org.codehaus.mojo.animal_sniffer.**
+-dontwarn okhttp3.**
+-dontwarn okio.**
+-dontwarn com.google.zxing.**
 
-# Keep Room Entities and DAOs
--keep class * extends androidx.room.RoomDatabase
--keep @androidx.room.Entity class *
--keep interface com.example.data.local.** { *; }
+# Keep Application Entry Points, Activities, VPN Services, TileService, and BroadcastReceivers
+-keep class com.example.MainActivity { *; }
+-keep class com.example.vpn.** { *; }
+-keep class com.example.worker.** { *; }
 
-# Keep Core Models & JSON Serialization
+# Keep Room Database, Entities, and DAOs
+-keep class * extends androidx.room.RoomDatabase { *; }
+-keep @androidx.room.Database class * { *; }
+-keep @androidx.room.Entity class * { *; }
+-keep @androidx.room.Dao class * { *; }
+-keep class com.example.data.local.** { *; }
+
+# Keep Domain Models, Parser, and Core Engine Adapters
 -keep class com.example.domain.model.** { *; }
--keep class com.example.core.xray.** { *; }
--keep class com.example.core.singbox.** { *; }
+-keep class com.example.core.** { *; }
+-keep class com.example.parser.** { *; }
+-keep class com.example.security.** { *; }
 
 # Strip verbose debug logs in release builds to prevent credential leakage
 -assumenosideeffects class android.util.Log {
