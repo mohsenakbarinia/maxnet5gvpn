@@ -45,6 +45,7 @@ class SettingsDataStore(private val context: Context) {
         val AUTO_RECONNECT = booleanPreferencesKey("auto_reconnect")
         val CONNECT_ON_BOOT = booleanPreferencesKey("connect_on_boot")
         val ONBOARDING_COMPLETED = booleanPreferencesKey("onboarding_completed")
+        val PROFILE_SORT_MODE = stringPreferencesKey("profile_sort_mode")
     }
 
     val settingsFlow: Flow<AppSettings> = context.dataStore.data.map { prefs ->
@@ -69,15 +70,16 @@ class SettingsDataStore(private val context: Context) {
                 SplitTunnelMode.valueOf(prefs[Keys.SPLIT_MODE] ?: SplitTunnelMode.ALL_APPS.name)
             }.getOrDefault(SplitTunnelMode.ALL_APPS),
             splitTunnelPackages = prefs[Keys.SPLIT_PACKAGES] ?: emptySet(),
-            languageCode = prefs[Keys.LANGUAGE_CODE] ?: "en-US",
+            languageCode = prefs[Keys.LANGUAGE_CODE] ?: "fa-IR",
             themePreference = runCatching {
                 ThemePreference.valueOf(prefs[Keys.THEME_PREF] ?: ThemePreference.DARK.name)
             }.getOrDefault(ThemePreference.DARK),
-            usePersianDigits = prefs[Keys.PERSIAN_DIGITS] ?: false,
+            usePersianDigits = prefs[Keys.PERSIAN_DIGITS] ?: true,
             fontScale = prefs[Keys.FONT_SCALE] ?: 1.0f,
             autoReconnect = prefs[Keys.AUTO_RECONNECT] ?: true,
             connectOnBoot = prefs[Keys.CONNECT_ON_BOOT] ?: false,
-            onboardingCompleted = prefs[Keys.ONBOARDING_COMPLETED] ?: false
+            onboardingCompleted = prefs[Keys.ONBOARDING_COMPLETED] ?: true,
+            profileSortMode = prefs[Keys.PROFILE_SORT_MODE] ?: "DEFAULT"
         )
     }
 
@@ -105,13 +107,14 @@ class SettingsDataStore(private val context: Context) {
                 mtu = prefs[Keys.MTU] ?: 1500,
                 splitTunnelMode = runCatching { SplitTunnelMode.valueOf(prefs[Keys.SPLIT_MODE] ?: "ALL_APPS") }.getOrDefault(SplitTunnelMode.ALL_APPS),
                 splitTunnelPackages = prefs[Keys.SPLIT_PACKAGES] ?: emptySet(),
-                languageCode = prefs[Keys.LANGUAGE_CODE] ?: "en-US",
+                languageCode = prefs[Keys.LANGUAGE_CODE] ?: "fa-IR",
                 themePreference = runCatching { ThemePreference.valueOf(prefs[Keys.THEME_PREF] ?: "DARK") }.getOrDefault(ThemePreference.DARK),
-                usePersianDigits = prefs[Keys.PERSIAN_DIGITS] ?: false,
+                usePersianDigits = prefs[Keys.PERSIAN_DIGITS] ?: true,
                 fontScale = prefs[Keys.FONT_SCALE] ?: 1.0f,
                 autoReconnect = prefs[Keys.AUTO_RECONNECT] ?: true,
                 connectOnBoot = prefs[Keys.CONNECT_ON_BOOT] ?: false,
-                onboardingCompleted = prefs[Keys.ONBOARDING_COMPLETED] ?: false
+                onboardingCompleted = prefs[Keys.ONBOARDING_COMPLETED] ?: true,
+                profileSortMode = prefs[Keys.PROFILE_SORT_MODE] ?: "DEFAULT"
             )
             val updated = transform(current)
             if (updated.selectedProfileId != null) prefs[Keys.SELECTED_PROFILE_ID] = updated.selectedProfileId
@@ -136,6 +139,7 @@ class SettingsDataStore(private val context: Context) {
             prefs[Keys.AUTO_RECONNECT] = updated.autoReconnect
             prefs[Keys.CONNECT_ON_BOOT] = updated.connectOnBoot
             prefs[Keys.ONBOARDING_COMPLETED] = updated.onboardingCompleted
+            prefs[Keys.PROFILE_SORT_MODE] = updated.profileSortMode
         }
     }
 }

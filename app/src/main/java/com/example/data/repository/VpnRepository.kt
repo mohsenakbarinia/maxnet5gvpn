@@ -23,8 +23,10 @@ import com.example.domain.model.UpdateManifest
 import com.example.parser.BatchParseResult
 import com.example.parser.ConfigParser
 import com.example.security.LogRedactor
+import com.example.data.subscription.SubscriptionRepository
+import com.example.domain.model.SubscriptionFormat
+import com.example.domain.model.SubscriptionImportReport
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -41,18 +43,23 @@ import java.util.concurrent.TimeUnit
 class VpnRepository(
     private val context: Context,
     private val dao: MaxNetDao,
-    private val settingsDataStore: SettingsDataStore
+    private val settingsDataStore: SettingsDataStore,
+    customHttpClient: OkHttpClient? = null
 ) {
-    companion object {
-        private const val MAX_SUBSCRIPTION_BYTES = 5L * 1024L * 1024L // 5 MB limit
-    }
-
-    private val httpClient: OkHttpClient = OkHttpClient.Builder()
+    private val httpClient: OkHttpClient = customHttpClient ?: OkHttpClient.Builder()
         .connectTimeout(12, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
         .followRedirects(true)
         .followSslRedirects(true)
         .build()
+
+    val subscriptionRepository = SubscriptionRepository(
+        dao = dao,
+        baseHttpClient = customHttpClient,
+        onLog = { level, tag, rawMessage, secrets ->
+            appendLog(level, tag, rawMessage, secrets)
+        }
+    )
 
     private val _logs = MutableStateFlow<List<RedactedLogEntry>>(emptyList())
     val logsFlow: StateFlow<List<RedactedLogEntry>> = _logs.asStateFlow()
@@ -168,22 +175,49 @@ class VpnRepository(
         result
     }
 
-    // Subscription Manager
-    suspend fun addSubscription(title: String, url: String, autoUpdate: Boolean): Result<SubscriptionItem> = withContext(Dispatchers.IO) {
-        val cleanUrl = url.trim()
-        if (!cleanUrl.startsWith("https://", ignoreCase = true)) {
-            return@withContext Result.failure(
-                IllegalArgumentException("Subscription URL must use HTTPS for security.")
-            )
+    suspend fun importBatchTextWithReport(
+        rawText: String,
+        groupName: String = "Default",
+        subscriptionId: Long? = null
+    ): Pair<BatchParseResult, SubscriptionImportReport> = withContext(Dispatchers.IO) {
+        val res = importBatchText(rawText, groupName, subscriptionId)
+        val isOk = res.profiles.isNotEmpty() || res.duplicatesSkipped > 0
+        val statusFa = when {
+            res.profiles.isNotEmpty() -> "ایمپورت کانفیگ‌ها با موفقیت انجام شد (${res.detectedFormat.labelFa})"
+            res.duplicatesSkipped > 0 && res.failures.isEmpty() -> "تمامی کانفیگ‌های دریافت‌شده قبلاً در برنامه ثبت شده‌اند"
+            else -> res.failures.firstOrNull()?.reason ?: "هیچ کانفیگ معتبری یافت نشد"
         }
-        val item = SubscriptionItem(
-            title = title.trim().ifBlank { "Subscription" },
-            url = cleanUrl,
-            enabledAutoUpdate = autoUpdate
+        val statusEn = when {
+            res.profiles.isNotEmpty() -> "Imported ${res.profiles.size} configuration(s)"
+            res.duplicatesSkipped > 0 && res.failures.isEmpty() -> "All configurations already exist (duplicates skipped)"
+            else -> res.failures.firstOrNull()?.reason ?: "No valid configurations found"
+        }
+        val report = SubscriptionImportReport(
+            title = if (groupName.isNotBlank() && groupName != "Default") groupName else "کلیپ‌بورد / ایمپورت مستقیم",
+            sourceType = "CLIPBOARD",
+            detectedFormat = res.detectedFormat,
+            totalReceivedCount = res.totalReceivedCount,
+            newImportedCount = res.profiles.size,
+            duplicateCount = res.duplicatesSkipped,
+            invalidCount = res.failures.size,
+            statusMessageFa = statusFa,
+            statusMessageEn = statusEn,
+            isSuccess = isOk
         )
-        val id = dao.insertSubscription(SubscriptionEntity.fromDomain(item))
-        val saved = item.copy(id = id)
-        refreshSubscription(saved)
+        res to report
+    }
+
+    // Subscription Manager
+    suspend fun addSubscription(title: String, url: String, autoUpdate: Boolean): Result<SubscriptionItem> {
+        return subscriptionRepository.addOrUpdateSubscription(title, url, autoUpdate).first
+    }
+
+    suspend fun addSubscriptionWithReport(
+        title: String,
+        url: String,
+        autoUpdate: Boolean
+    ): Pair<Result<SubscriptionItem>, SubscriptionImportReport> {
+        return subscriptionRepository.addOrUpdateSubscription(title, url, autoUpdate)
     }
 
     suspend fun deleteSubscription(subscriptionId: Long) = withContext(Dispatchers.IO) {
@@ -192,135 +226,12 @@ class VpnRepository(
         appendLog("INFO", "Subscription", "Deleted subscription ID=$subscriptionId and its associated profiles")
     }
 
-    /**
-     * Fetches and updates a subscription over HTTPS with:
-     * - Retry policy (up to 2 attempts)
-     * - Strict 5 MB response size limit
-     * - HTML response rejection
-     * - Header metadata parsing (Subscription-Userinfo, Profile-Update-Interval, Profile-Title, Support-Url, Announce)
-     * - Preservation of manually added profiles & active profile selection
-     */
-    suspend fun refreshSubscription(sub: SubscriptionItem): Result<SubscriptionItem> = withContext(Dispatchers.IO) {
-        if (!sub.url.startsWith("https://", ignoreCase = true)) {
-            return@withContext Result.failure(IllegalArgumentException("Only HTTPS subscription URLs are permitted."))
-        }
-
-        var lastException: Exception? = null
-        for (attempt in 1..2) {
-            try {
-                val request = Request.Builder()
-                    .url(sub.url)
-                    .header("User-Agent", "MAXNET5G-VPN/1.0")
-                    .get()
-                    .build()
-
-                httpClient.newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) {
-                        throw IllegalStateException("HTTP ${response.code}: ${response.message}")
-                    }
-                    val contentType = response.header("Content-Type").orEmpty()
-                    if (contentType.contains("text/html", ignoreCase = true)) {
-                        throw IllegalStateException("Rejected HTML response from subscription endpoint")
-                    }
-
-                    val bodySource = response.body?.source()
-                        ?: throw IllegalStateException("Empty subscription response body")
-                    bodySource.request(MAX_SUBSCRIPTION_BYTES + 1L)
-                    if (bodySource.buffer.size > MAX_SUBSCRIPTION_BYTES) {
-                        throw IllegalStateException("Subscription response exceeds maximum 5 MB limit")
-                    }
-                    val bodyText = bodySource.readUtf8()
-
-                    // Parse headers
-                    val userInfoHeader = response.header("Subscription-Userinfo")
-                        ?: response.header("subscription-userinfo")
-                    val parsedUserInfo = parseSubscriptionUserInfo(userInfoHeader)
-                    val intervalHeader = (response.header("Profile-Update-Interval")
-                        ?: response.header("profile-update-interval"))?.toIntOrNull()
-                    val titleHeader = response.header("Profile-Title")
-                    val supportUrlHeader = response.header("Support-Url").orEmpty()
-                    val webPageUrlHeader = response.header("Profile-Web-Page-Url").orEmpty()
-                    val announceHeader = response.header("Announce").orEmpty()
-
-                    // Keep track of previously selected profile fingerprint so selection survives refresh
-                    val allBefore = dao.getAllProfilesSnapshot().map { it.toDomain() }
-                    val manualFingerprints = allBefore
-                        .filter { it.subscriptionId != sub.id }
-                        .map { it.uniqueFingerprintKey() }
-                        .toSet()
-
-                    val batch = ConfigParser.parseBatch(
-                        rawInput = bodyText,
-                        defaultGroup = sub.title,
-                        subscriptionId = sub.id,
-                        existingFingerprintKeys = manualFingerprints
-                    )
-
-                    if (batch.profiles.isEmpty()) {
-                        throw IllegalStateException(
-                            batch.failures.firstOrNull()?.reason ?: "No valid server configurations found in subscription"
-                        )
-                    }
-
-                    // Replace only this subscription's profiles; never touch manual profiles
-                    dao.deleteProfilesBySubscriptionId(sub.id)
-                    val newEntities = batch.profiles.mapIndexed { idx, p ->
-                        ProfileEntity.fromDomain(
-                            p.copy(
-                                subscriptionId = sub.id,
-                                groupName = sub.title,
-                                sortOrder = idx
-                            )
-                        )
-                    }
-                    dao.insertProfiles(newEntities)
-
-                    val updatedSub = sub.copy(
-                        title = if (!titleHeader.isNullOrBlank() && sub.title == "Subscription") titleHeader else sub.title,
-                        updateIntervalHours = intervalHeader ?: sub.updateIntervalHours,
-                        lastUpdatedAt = System.currentTimeMillis(),
-                        lastStatus = "OK (${batch.profiles.size} servers)",
-                        uploadBytes = parsedUserInfo["upload"],
-                        downloadBytes = parsedUserInfo["download"],
-                        totalBytes = parsedUserInfo["total"],
-                        expireTimestampSec = parsedUserInfo["expire"],
-                        supportUrl = supportUrlHeader.ifBlank { sub.supportUrl },
-                        webPageUrl = webPageUrlHeader.ifBlank { sub.webPageUrl },
-                        announcement = announceHeader.ifBlank { sub.announcement },
-                        profileCount = batch.profiles.size
-                    )
-                    dao.updateSubscription(SubscriptionEntity.fromDomain(updatedSub))
-                    appendLog("INFO", "Subscription", "Updated '${updatedSub.title}' with ${batch.profiles.size} servers", listOf(sub.url))
-                    return@withContext Result.success(updatedSub)
-                }
-            } catch (e: Exception) {
-                lastException = e
-                if (attempt == 1) delay(600L)
-            }
-        }
-
-        val errMsg = lastException?.message ?: "Subscription update failed"
-        val failedSub = sub.copy(
-            lastUpdatedAt = System.currentTimeMillis(),
-            lastStatus = "Error: $errMsg"
-        )
-        dao.updateSubscription(SubscriptionEntity.fromDomain(failedSub))
-        appendLog("ERROR", "Subscription", "Subscription '${sub.title}' failed: $errMsg", listOf(sub.url))
-        Result.failure(lastException ?: IllegalStateException(errMsg))
+    suspend fun refreshSubscription(sub: SubscriptionItem): Result<SubscriptionItem> {
+        return subscriptionRepository.refreshSubscriptionWithReport(sub, isNewCreation = false).first
     }
 
-    private fun parseSubscriptionUserInfo(header: String?): Map<String, Long> {
-        if (header.isNullOrBlank()) return emptyMap()
-        val map = mutableMapOf<String, Long>()
-        header.split(";").forEach { part ->
-            val kv = part.trim().split("=")
-            if (kv.size == 2) {
-                val k = kv[0].trim().lowercase()
-                val v = kv[1].trim().toLongOrNull()
-                if (v != null) map[k] = v
-            }
-        }
-        return map
+    suspend fun refreshSubscriptionWithReport(sub: SubscriptionItem): Pair<Result<SubscriptionItem>, SubscriptionImportReport> {
+        return subscriptionRepository.refreshSubscriptionWithReport(sub, isNewCreation = false)
     }
 
     // Routing Rules

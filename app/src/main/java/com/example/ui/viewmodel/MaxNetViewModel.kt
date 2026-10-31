@@ -5,23 +5,30 @@ import android.graphics.Bitmap
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.core.LatencyTester
+import com.example.core.NetworkQualityTester
 import com.example.data.local.MaxNetDatabase
 import com.example.data.preferences.SettingsDataStore
 import com.example.data.repository.VpnRepository
 import com.example.data.subscription.SubscriptionUpdateWorker
 import com.example.domain.model.AppSettings
 import com.example.domain.model.BrandingConfig
+import com.example.domain.model.ClipboardInputType
+import com.example.domain.model.ConnectionQualityReport
 import com.example.domain.model.DiagnosticSnapshot
 import com.example.domain.model.EngineStatistics
 import com.example.domain.model.EngineType
 import com.example.domain.model.InstalledAppInfo
 import com.example.domain.model.OutboundTag
+import com.example.domain.model.QualityTestStage
 import com.example.domain.model.RedactedLogEntry
 import com.example.domain.model.RoutingMode
 import com.example.domain.model.RoutingRuleItem
 import com.example.domain.model.RoutingRuleType
 import com.example.domain.model.ServerProfile
 import com.example.domain.model.SplitTunnelMode
+import com.example.domain.model.SubscriptionFormat
+import com.example.domain.model.LatencyMeasureType
+import com.example.domain.model.SubscriptionImportReport
 import com.example.domain.model.SubscriptionItem
 import com.example.domain.model.ThemePreference
 import com.example.domain.model.VpnConnectionState
@@ -29,7 +36,10 @@ import com.example.domain.model.VpnProtocol
 import com.example.parser.ConfigParser
 import com.example.security.LogRedactor
 import com.example.util.QrCodeHelper
+import com.example.util.ResolvedServerLocation
+import com.example.util.ServerLocationResolver
 import com.example.vpn.VpnController
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -37,15 +47,55 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 enum class ProfileSortMode(val labelEn: String, val labelFa: String) {
-    DEFAULT("Pinned & Order", "سنجاق و ترتیب"),
-    LATENCY("Lowest Ping", "کمترین پینگ"),
-    NAME("Name (A–Z)", "نام (الفبا)"),
+    DEFAULT("Default order", "ترتیب پیش‌فرض"),
+    LATENCY("Lowest ping", "کمترین پینگ"),
+    HIGHEST_PING("Highest ping", "بیشترین پینگ"),
+    NAME("Alphabetical", "حروف الفبا"),
+    RECENTLY_ADDED("Recently added", "جدیدترین‌ها"),
+    FAVORITES_FIRST("Favorites first", "ابتدا علاقه‌مندی‌ها"),
     PROTOCOL("Protocol", "پروتکل")
 }
+
+enum class ProfileConnectionFilter(val labelEn: String, val labelFa: String) {
+    ALL("All statuses", "همه وضعیت‌ها"),
+    CONNECTED("Connected", "متصل"),
+    REACHABLE("Reachable", "پینگ سالم"),
+    UNTESTED("Untested", "تست‌نشده"),
+    FAILED("Failed", "ناموفق / خطا")
+}
+
+enum class TestBulkScope(val labelEn: String, val labelFa: String) {
+    ALL("Test all profiles", "تست همه پروفایل‌ها"),
+    FILTERED("Test filtered profiles", "تست پروفایل‌های فیلترشده"),
+    SELECTED("Test selected profiles", "تست پروفایل‌های انتخاب‌شده")
+}
+
+data class ProfileExtraFilterState(
+    val favoritesOnly: Boolean = false,
+    val pinnedOnly: Boolean = false,
+    val countryCode: String? = null,
+    val connectionFilter: ProfileConnectionFilter = ProfileConnectionFilter.ALL
+) {
+    val activeFilterCount: Int
+        get() = (if (favoritesOnly) 1 else 0) +
+            (if (pinnedOnly) 1 else 0) +
+            (if (countryCode != null) 1 else 0) +
+            (if (connectionFilter != ProfileConnectionFilter.ALL) 1 else 0)
+}
+
+data class LatencyTestProgress(
+    val isTesting: Boolean = false,
+    val completedCount: Int = 0,
+    val totalCount: Int = 0,
+    val reachableCount: Int = 0,
+    val scope: TestBulkScope = TestBulkScope.ALL
+)
 
 class MaxNetViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -59,6 +109,21 @@ class MaxNetViewModel(application: Application) : AndroidViewModel(application) 
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AppSettings())
 
     private val rawProfilesFlow = repository.profilesFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val totalProfilesCountState: StateFlow<Int> = rawProfilesFlow
+        .map { it.size }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+
+    val availableCountriesState: StateFlow<List<ResolvedServerLocation>> = rawProfilesFlow
+        .map { profiles ->
+            profiles
+                .asSequence()
+                .map { ServerLocationResolver.resolve(it) }
+                .distinctBy { it.countryCode }
+                .sortedBy { it.nameFa }
+                .toList()
+        }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val subscriptionsState: StateFlow<List<SubscriptionItem>> = repository.subscriptionsFlow
@@ -85,6 +150,9 @@ class MaxNetViewModel(application: Application) : AndroidViewModel(application) 
     private val _groupFilter = MutableStateFlow<String?>(null)
     val groupFilter: StateFlow<String?> = _groupFilter.asStateFlow()
 
+    private val _extraFilter = MutableStateFlow(ProfileExtraFilterState())
+    val extraFilterState: StateFlow<ProfileExtraFilterState> = _extraFilter.asStateFlow()
+
     private val _sortMode = MutableStateFlow(ProfileSortMode.DEFAULT)
     val sortMode: StateFlow<ProfileSortMode> = _sortMode.asStateFlow()
 
@@ -93,6 +161,12 @@ class MaxNetViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _isTestingLatency = MutableStateFlow(false)
     val isTestingLatency: StateFlow<Boolean> = _isTestingLatency.asStateFlow()
+
+    private val _latencyTestProgress = MutableStateFlow(LatencyTestProgress())
+    val latencyTestProgressState: StateFlow<LatencyTestProgress> = _latencyTestProgress.asStateFlow()
+
+    private val _liveMeasuredProfileIds = MutableStateFlow<Set<Long>>(emptySet())
+    val liveMeasuredProfileIdsState: StateFlow<Set<Long>> = _liveMeasuredProfileIds.asStateFlow()
 
     private val _isRefreshingSubscriptions = MutableStateFlow(false)
     val isRefreshingSubscriptions: StateFlow<Boolean> = _isRefreshingSubscriptions.asStateFlow()
@@ -112,35 +186,120 @@ class MaxNetViewModel(application: Application) : AndroidViewModel(application) 
     private val _qrShareProfile = MutableStateFlow<ServerProfile?>(null)
     val qrShareProfile: StateFlow<ServerProfile?> = _qrShareProfile.asStateFlow()
 
-    private var latencyJob: Job? = null
+    private val _pendingClipboardSubscription = MutableStateFlow<ClipboardInputType.SubscriptionUrl?>(null)
+    val pendingClipboardSubscription: StateFlow<ClipboardInputType.SubscriptionUrl?> = _pendingClipboardSubscription.asStateFlow()
 
-    val filteredProfilesState: StateFlow<List<ServerProfile>> = combine(
-        rawProfilesFlow,
+    private val _subscriptionImportReport = MutableStateFlow<SubscriptionImportReport?>(null)
+    val subscriptionImportReportState: StateFlow<SubscriptionImportReport?> = _subscriptionImportReport.asStateFlow()
+
+    private val _qualityReport = MutableStateFlow(ConnectionQualityReport())
+    val qualityReportState: StateFlow<ConnectionQualityReport> = _qualityReport.asStateFlow()
+
+    private var latencyJob: Job? = null
+    private var qualityTestJob: Job? = null
+
+    private data class FilterCriteria(
+        val query: String,
+        val protocol: VpnProtocol?,
+        val group: String?,
+        val extra: ProfileExtraFilterState,
+        val sort: ProfileSortMode
+    )
+
+    private val filterCriteriaFlow = combine(
         _searchQuery,
         _protocolFilter,
         _groupFilter,
+        _extraFilter,
         _sortMode
-    ) { profiles, query, proto, group, sort ->
-        val q = query.trim().lowercase()
+    ) { q, proto, grp, extra, sort ->
+        FilterCriteria(q, proto, grp, extra, sort)
+    }
+
+    val filteredProfilesState: StateFlow<List<ServerProfile>> = combine(
+        rawProfilesFlow,
+        filterCriteriaFlow,
+        settingsState,
+        connectionState
+    ) { profiles, criteria, settings, connState ->
+        val q = criteria.query.trim().lowercase()
+        val proto = criteria.protocol
+        val group = criteria.group
+        val extra = criteria.extra
+        val sort = criteria.sort
+        val connectedProfileId = if (connState == VpnConnectionState.CONNECTED) settings.selectedProfileId else null
+
         val filtered = profiles.filter { p ->
-            val matchesQuery = q.isEmpty() ||
-                p.remarks.lowercase().contains(q) ||
-                p.address.lowercase().contains(q) ||
-                p.protocol.displayName.lowercase().contains(q) ||
-                p.groupName.lowercase().contains(q)
             val matchesProto = proto == null || p.protocol == proto
+            if (!matchesProto) return@filter false
+
             val matchesGroup = group == null || p.groupName.equals(group, ignoreCase = true)
-            matchesQuery && matchesProto && matchesGroup
+            if (!matchesGroup) return@filter false
+
+            if (extra.favoritesOnly && !p.isFavorite) return@filter false
+            if (extra.pinnedOnly && !p.isPinned) return@filter false
+
+            val needsLocation = extra.countryCode != null || q.isNotEmpty()
+            val location = if (needsLocation) ServerLocationResolver.resolve(p) else null
+
+            if (extra.countryCode != null && location?.countryCode != extra.countryCode) {
+                return@filter false
+            }
+
+            val matchesConn = when (extra.connectionFilter) {
+                ProfileConnectionFilter.ALL -> true
+                ProfileConnectionFilter.CONNECTED -> p.id == connectedProfileId || p.id == settings.selectedProfileId
+                ProfileConnectionFilter.REACHABLE -> p.lastLatencyMs != null && p.lastLatencyMs > 0
+                ProfileConnectionFilter.UNTESTED -> p.lastLatencyMs == null && p.latencyType == LatencyMeasureType.UNTESTED
+                ProfileConnectionFilter.FAILED -> p.latencyType == LatencyMeasureType.TIMEOUT
+            }
+            if (!matchesConn) return@filter false
+
+            if (q.isEmpty()) {
+                true
+            } else {
+                p.remarks.lowercase().contains(q) ||
+                    p.address.lowercase().contains(q) ||
+                    "${p.address.lowercase()}:${p.port}".contains(q) ||
+                    p.host.lowercase().contains(q) ||
+                    p.sni.lowercase().contains(q) ||
+                    p.protocol.displayName.lowercase().contains(q) ||
+                    p.protocol.scheme.lowercase().contains(q) ||
+                    p.groupName.lowercase().contains(q) ||
+                    (location != null && (
+                        location.nameFa.lowercase().contains(q) ||
+                            location.nameEn.lowercase().contains(q) ||
+                            location.countryCode.lowercase().contains(q)
+                        ))
+            }
         }
+
+        // Preserve user's original ordering in database; only sort view projection
         when (sort) {
             ProfileSortMode.DEFAULT -> filtered
             ProfileSortMode.LATENCY -> filtered.sortedWith(
                 compareBy<ServerProfile> { !it.isPinned }
                     .thenBy { it.lastLatencyMs ?: Long.MAX_VALUE }
             )
+            ProfileSortMode.HIGHEST_PING -> filtered.sortedWith(
+                compareBy<ServerProfile> { !it.isPinned }
+                    .thenBy { it.lastLatencyMs == null }
+                    .thenByDescending { it.lastLatencyMs ?: Long.MIN_VALUE }
+            )
             ProfileSortMode.NAME -> filtered.sortedWith(
                 compareBy<ServerProfile> { !it.isPinned }
                     .thenBy { it.remarks.lowercase() }
+            )
+            ProfileSortMode.RECENTLY_ADDED -> filtered.sortedWith(
+                compareBy<ServerProfile> { !it.isPinned }
+                    .thenByDescending { it.createdAt }
+                    .thenByDescending { it.id }
+            )
+            ProfileSortMode.FAVORITES_FIRST -> filtered.sortedWith(
+                compareBy<ServerProfile> { !it.isFavorite }
+                    .thenBy { !it.isPinned }
+                    .thenBy { it.sortOrder }
+                    .thenByDescending { it.id }
             )
             ProfileSortMode.PROTOCOL -> filtered.sortedWith(
                 compareBy<ServerProfile> { !it.isPinned }
@@ -158,6 +317,13 @@ class MaxNetViewModel(application: Application) : AndroidViewModel(application) 
 
     init {
         SubscriptionUpdateWorker.schedulePeriodicUpdates(application)
+        viewModelScope.launch {
+            val savedSettings = repository.settingsFlow.first()
+            val restoredSort = runCatching {
+                ProfileSortMode.valueOf(savedSettings.profileSortMode)
+            }.getOrDefault(ProfileSortMode.DEFAULT)
+            _sortMode.value = restoredSort
+        }
     }
 
     fun showMessage(msg: String) {
@@ -180,8 +346,34 @@ class MaxNetViewModel(application: Application) : AndroidViewModel(application) 
         _groupFilter.value = group
     }
 
+    fun setFavoritesOnlyFilter(enabled: Boolean) {
+        _extraFilter.value = _extraFilter.value.copy(favoritesOnly = enabled)
+    }
+
+    fun setPinnedOnlyFilter(enabled: Boolean) {
+        _extraFilter.value = _extraFilter.value.copy(pinnedOnly = enabled)
+    }
+
+    fun setCountryFilter(countryCode: String?) {
+        _extraFilter.value = _extraFilter.value.copy(countryCode = countryCode)
+    }
+
+    fun setConnectionStatusFilter(filter: ProfileConnectionFilter) {
+        _extraFilter.value = _extraFilter.value.copy(connectionFilter = filter)
+    }
+
+    fun clearAllFilters() {
+        _protocolFilter.value = null
+        _groupFilter.value = null
+        _extraFilter.value = ProfileExtraFilterState()
+        _searchQuery.value = ""
+    }
+
     fun setSortMode(mode: ProfileSortMode) {
         _sortMode.value = mode
+        viewModelScope.launch {
+            repository.updateSettings { it.copy(profileSortMode = mode.name) }
+        }
     }
 
     fun toggleBulkSelection(profileId: Long) {
@@ -256,19 +448,78 @@ class MaxNetViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun importConfigurations(rawText: String, groupName: String = "Default") {
-        viewModelScope.launch {
-            val res = repository.importBatchText(rawText, groupName)
-            if (res.profiles.isNotEmpty()) {
-                val all = repository.getAllProfilesSnapshot()
-                if (settingsState.value.selectedProfileId == null && all.isNotEmpty()) {
-                    repository.selectProfile(all.first().id)
+        when (val classified = ConfigParser.classifyClipboardInput(rawText)) {
+            is ClipboardInputType.Empty -> {
+                showMessage("حافظه کلیپ‌بورد خالی است (Clipboard is empty)")
+            }
+            is ClipboardInputType.SubscriptionUrl -> {
+                // Trigger mandatory confirmation dialog:
+                // "لینک اشتراک شناسایی شد. آیا می‌خواهید آن را اضافه کنید؟"
+                val titleHint = if (groupName.isNotBlank() && groupName != "Default") {
+                    groupName
+                } else {
+                    classified.suggestedTitle
                 }
-                showMessage("Imported ${res.profiles.size} configuration(s) (${res.duplicatesSkipped} duplicate skipped)")
-            } else {
-                val reason = res.failures.firstOrNull()?.reason ?: "No valid configurations found"
-                showMessage("Import failed: $reason")
+                _pendingClipboardSubscription.value = classified.copy(suggestedTitle = titleHint)
+            }
+            is ClipboardInputType.Unrecognized -> {
+                val report = SubscriptionImportReport(
+                    title = "ایمپورت از کلیپ‌بورد",
+                    sourceType = "CLIPBOARD",
+                    detectedFormat = SubscriptionFormat.INVALID,
+                    totalReceivedCount = 1,
+                    newImportedCount = 0,
+                    duplicateCount = 0,
+                    invalidCount = 1,
+                    statusMessageFa = classified.reasonFa,
+                    statusMessageEn = classified.reasonEn,
+                    isSuccess = false
+                )
+                _subscriptionImportReport.value = report
+                showMessage(classified.reasonFa)
+            }
+            is ClipboardInputType.SingleShareLink,
+            is ClipboardInputType.BulkShareLinks,
+            is ClipboardInputType.Base64Subscription,
+            is ClipboardInputType.JsonSubscription -> {
+                viewModelScope.launch {
+                    val (res, report) = repository.importBatchTextWithReport(rawText, groupName)
+                    if (res.profiles.isNotEmpty()) {
+                        val all = repository.getAllProfilesSnapshot()
+                        if (settingsState.value.selectedProfileId == null && all.isNotEmpty()) {
+                            repository.selectProfile(all.first().id)
+                        }
+                        showMessage("Imported ${res.profiles.size} configuration(s) (${res.duplicatesSkipped} duplicate skipped)")
+                    } else if (res.duplicatesSkipped > 0) {
+                        showMessage("All ${res.duplicatesSkipped} configuration(s) already exist")
+                    } else {
+                        val reason = res.failures.firstOrNull()?.reason ?: "No valid configurations found"
+                        showMessage("Import failed: $reason")
+                    }
+                    _subscriptionImportReport.value = report
+                }
             }
         }
+    }
+
+    fun confirmClipboardSubscriptionImport(
+        customTitle: String? = null,
+        autoUpdate: Boolean = true,
+        onNavigateToSubscriptionFlow: () -> Unit = {}
+    ) {
+        val pending = _pendingClipboardSubscription.value ?: return
+        _pendingClipboardSubscription.value = null
+        val title = customTitle?.takeIf { it.isNotBlank() } ?: pending.suggestedTitle
+        onNavigateToSubscriptionFlow()
+        addSubscription(title = title, url = pending.url, autoUpdate = autoUpdate)
+    }
+
+    fun dismissClipboardSubscriptionImport() {
+        _pendingClipboardSubscription.value = null
+    }
+
+    fun dismissSubscriptionImportReport() {
+        _subscriptionImportReport.value = null
     }
 
     fun decodeAndImportQrBitmap(bitmap: Bitmap) {
@@ -288,7 +539,7 @@ class MaxNetViewModel(application: Application) : AndroidViewModel(application) 
     fun confirmDeepLinkImport() {
         val uri = _pendingDeepLinkUri.value ?: return
         _pendingDeepLinkUri.value = null
-        // Support maxnet5g://import?uri=... or direct vless://...
+        // Support maxnet5g://import?uri=... or direct vless://... or https://...
         val payload = if (uri.startsWith("maxnet5g://", ignoreCase = true) && uri.contains("url=")) {
             ConfigParser.percentDecode(uri.substringAfter("url=").substringBefore("&"))
         } else {
@@ -362,6 +613,7 @@ class MaxNetViewModel(application: Application) : AndroidViewModel(application) 
                 LatencyTester.testSingleTcpLatency(profile)
             }
             repository.updateProfileLatency(profile.id, outcome.latencyMs, outcome.measureType)
+            _liveMeasuredProfileIds.value = _liveMeasuredProfileIds.value + profile.id
             val msg = if (outcome.latencyMs != null) {
                 "${profile.remarks}: ${outcome.latencyMs} ms (${outcome.measureType.label})"
             } else {
@@ -372,32 +624,64 @@ class MaxNetViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun testAllProfilesLatency( autoSelectBest: Boolean = false) {
+    fun testAllProfilesLatency(autoSelectBest: Boolean = false) {
+        testProfilesByScope(scope = TestBulkScope.ALL, autoSelectBest = autoSelectBest)
+    }
+
+    fun testProfilesByScope(scope: TestBulkScope, autoSelectBest: Boolean = false) {
         if (_isTestingLatency.value) return
         latencyJob = viewModelScope.launch {
-            val profiles = filteredProfilesState.value.ifEmpty { repository.getAllProfilesSnapshot() }
-            if (profiles.isEmpty()) {
-                showMessage("No profiles available to test")
+            val allProfiles = repository.getAllProfilesSnapshot()
+            val targetProfiles = when (scope) {
+                TestBulkScope.ALL -> allProfiles
+                TestBulkScope.FILTERED -> filteredProfilesState.value.ifEmpty { allProfiles }
+                TestBulkScope.SELECTED -> {
+                    val selIds = _selectedBulkIds.value
+                    allProfiles.filter { it.id in selIds }
+                }
+            }
+            if (targetProfiles.isEmpty()) {
+                showMessage("هیچ پروفایلی برای تست وجود ندارد (No profiles to test)")
                 return@launch
             }
             _isTestingLatency.value = true
+            var completed = 0
+            var reachableCount = 0
+            _latencyTestProgress.value = LatencyTestProgress(
+                isTesting = true,
+                completedCount = 0,
+                totalCount = targetProfiles.size,
+                reachableCount = 0,
+                scope = scope
+            )
             try {
-                val outcomes = LatencyTester.testProfilesConcurrently(profiles) { outcome ->
+                val outcomes = LatencyTester.testProfilesConcurrently(targetProfiles) { outcome ->
                     repository.updateProfileLatency(outcome.profileId, outcome.latencyMs, outcome.measureType)
+                    _liveMeasuredProfileIds.value = _liveMeasuredProfileIds.value + outcome.profileId
+                    completed++
+                    if (outcome.latencyMs != null) reachableCount++
+                    _latencyTestProgress.value = LatencyTestProgress(
+                        isTesting = true,
+                        completedCount = completed,
+                        totalCount = targetProfiles.size,
+                        reachableCount = reachableCount,
+                        scope = scope
+                    )
                 }
                 val reachable = outcomes.filter { it.latencyMs != null }
                 if (autoSelectBest && reachable.isNotEmpty()) {
                     val best = reachable.minByOrNull { it.latencyMs ?: Long.MAX_VALUE }
                     if (best != null) {
                         repository.selectProfile(best.profileId)
-                        val bestProfile = profiles.find { it.id == best.profileId }
+                        val bestProfile = targetProfiles.find { it.id == best.profileId }
                         showMessage("Selected best server: ${bestProfile?.remarks ?: ""} (${best.latencyMs} ms)")
                     }
                 } else {
-                    showMessage("Latency test finished: ${reachable.size}/${outcomes.size} reachable")
+                    showMessage("تست پینگ تکمیل شد: ${reachable.size} از ${outcomes.size} سرور در دسترس")
                 }
             } finally {
                 _isTestingLatency.value = false
+                _latencyTestProgress.value = _latencyTestProgress.value.copy(isTesting = false)
             }
         }
     }
@@ -405,7 +689,42 @@ class MaxNetViewModel(application: Application) : AndroidViewModel(application) 
     fun cancelLatencyTesting() {
         latencyJob?.cancel()
         _isTestingLatency.value = false
-        showMessage("Cancelled latency testing")
+        _latencyTestProgress.value = _latencyTestProgress.value.copy(isTesting = false)
+        showMessage("تست پینگ لغو شد (Cancelled latency testing)")
+    }
+
+    fun runConnectionQualityTest() {
+        if (qualityTestJob?.isActive == true) return
+        qualityTestJob = viewModelScope.launch {
+            val profile = activeProfileState.value ?: rawProfilesFlow.value.firstOrNull()
+            val isConnected = connectionState.value == VpnConnectionState.CONNECTED
+            val localSocksPort = statisticsState.value.localSocksPort
+            val finalReport = NetworkQualityTester.runQualityTest(
+                profile = profile,
+                isVpnConnected = isConnected,
+                localSocksPort = localSocksPort,
+                onStageUpdate = { partial ->
+                    _qualityReport.value = partial
+                }
+            )
+            _qualityReport.value = finalReport
+            if (profile != null && finalReport.latencyMs != null) {
+                repository.updateProfileLatency(profile.id, finalReport.latencyMs, finalReport.latencyType)
+            }
+            val isFa = settingsState.value.languageCode.startsWith("fa", ignoreCase = true)
+            val summary = if (isFa) finalReport.summaryMessageFa else finalReport.summaryMessageEn
+            if (summary.isNotBlank()) {
+                repository.appendLog("INFO", "QualityTest", summary, listOfNotNull(profile?.credential))
+            }
+        }
+    }
+
+    fun cancelConnectionQualityTest() {
+        qualityTestJob?.cancel()
+        qualityTestJob = null
+        _qualityReport.value = _qualityReport.value.copy(
+            stage = QualityTestStage.IDLE
+        )
     }
 
     // Core JSON Preview & Share Dialogs
@@ -439,10 +758,17 @@ class MaxNetViewModel(application: Application) : AndroidViewModel(application) 
     fun addSubscription(title: String, url: String, autoUpdate: Boolean) {
         viewModelScope.launch {
             _isRefreshingSubscriptions.value = true
-            val res = repository.addSubscription(title, url, autoUpdate)
+            val (res, report) = repository.addSubscriptionWithReport(title, url, autoUpdate)
             _isRefreshingSubscriptions.value = false
+            _subscriptionImportReport.value = report
             res.fold(
-                onSuccess = { sub -> showMessage("Added '${sub.title}' (${sub.profileCount} profiles)") },
+                onSuccess = { sub ->
+                    val all = repository.getAllProfilesSnapshot()
+                    if (settingsState.value.selectedProfileId == null && all.isNotEmpty()) {
+                        repository.selectProfile(all.first().id)
+                    }
+                    showMessage("Added '${sub.title}' (${sub.profileCount} profiles)")
+                },
                 onFailure = { err -> showMessage("Subscription error: ${err.message}") }
             )
         }
@@ -451,10 +777,17 @@ class MaxNetViewModel(application: Application) : AndroidViewModel(application) 
     fun refreshSubscription(sub: SubscriptionItem) {
         viewModelScope.launch {
             _isRefreshingSubscriptions.value = true
-            val res = repository.refreshSubscription(sub)
+            val (res, report) = repository.refreshSubscriptionWithReport(sub)
             _isRefreshingSubscriptions.value = false
+            _subscriptionImportReport.value = report
             res.fold(
-                onSuccess = { updated -> showMessage("Updated '${updated.title}' (${updated.profileCount} servers)") },
+                onSuccess = { updated ->
+                    val all = repository.getAllProfilesSnapshot()
+                    if (settingsState.value.selectedProfileId == null && all.isNotEmpty()) {
+                        repository.selectProfile(all.first().id)
+                    }
+                    showMessage("Updated '${updated.title}' (${updated.profileCount} servers)")
+                },
                 onFailure = { err -> showMessage("Update failed: ${err.message}") }
             )
         }
@@ -466,10 +799,33 @@ class MaxNetViewModel(application: Application) : AndroidViewModel(application) 
             if (subs.isEmpty()) return@launch
             _isRefreshingSubscriptions.value = true
             var okCount = 0
+            var totalReceived = 0
+            var totalNew = 0
+            var totalDup = 0
+            var totalInvalid = 0
+            var lastFormat = SubscriptionFormat.PLAIN_TEXT
             for (sub in subs) {
-                if (repository.refreshSubscription(sub).isSuccess) okCount++
+                val (res, rep) = repository.refreshSubscriptionWithReport(sub)
+                if (res.isSuccess) okCount++
+                totalReceived += rep.totalReceivedCount
+                totalNew += rep.newImportedCount
+                totalDup += rep.duplicateCount
+                totalInvalid += rep.invalidCount
+                lastFormat = rep.detectedFormat
             }
             _isRefreshingSubscriptions.value = false
+            _subscriptionImportReport.value = SubscriptionImportReport(
+                title = "بروزرسانی همه اشتراک‌ها",
+                sourceType = "SUBSCRIPTION",
+                detectedFormat = lastFormat,
+                totalReceivedCount = totalReceived,
+                newImportedCount = totalNew,
+                duplicateCount = totalDup,
+                invalidCount = totalInvalid,
+                statusMessageFa = "بروزرسانی $okCount از ${subs.size} اشتراک انجام شد",
+                statusMessageEn = "Updated $okCount/${subs.size} subscription(s)",
+                isSuccess = okCount > 0
+            )
             showMessage("Updated $okCount/${subs.size} subscription(s)")
         }
     }

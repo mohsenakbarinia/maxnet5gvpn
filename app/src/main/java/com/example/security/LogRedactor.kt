@@ -17,7 +17,12 @@ object LogRedactor {
         option = RegexOption.IGNORE_CASE
     )
     private val httpsUrlQueryRegex = Regex(
-        pattern = "https?://[^\\s\"']+\\?[^\\s\"']+"
+        pattern = "https?://[^\\s\"']+\\?[^\\s\"']+",
+        option = RegexOption.IGNORE_CASE
+    )
+    private val subscriptionPathUrlRegex = Regex(
+        pattern = "https?://[^/\\s\"']+(:\\d+)?/(sub|api|link|v1|v2|s)/[^\\s\"']+",
+        option = RegexOption.IGNORE_CASE
     )
 
     fun redact(raw: String, knownSecrets: Collection<String> = emptyList()): String {
@@ -30,6 +35,7 @@ object LogRedactor {
             "\"${match.groupValues[1]}\": \"[REDACTED]\""
         }
         sanitized = httpsUrlQueryRegex.replace(sanitized, "[REDACTED-SUBSCRIPTION-URL]")
+        sanitized = subscriptionPathUrlRegex.replace(sanitized, "[REDACTED-SUBSCRIPTION-URL]")
         for (secret in knownSecrets) {
             val trimmed = secret.trim()
             if (trimmed.length >= 4) {

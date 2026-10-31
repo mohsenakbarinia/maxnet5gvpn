@@ -110,6 +110,7 @@ enum class ThemePreference {
     LIGHT
 }
 
+@androidx.compose.runtime.Immutable
 data class ServerProfile(
     val id: Long = 0L,
     val remarks: String,
@@ -146,9 +147,62 @@ data class ServerProfile(
     val createdAt: Long = System.currentTimeMillis()
 ) {
     fun uniqueFingerprintKey(): String {
-        return "${protocol.name}|${address.lowercase()}|$port|${credential.take(12)}|${network.wireName}|${security.wireName}|$path|$sni|$realityPublicKey"
+        return "${protocol.name}|${address.trim().lowercase()}|$port|${credential.trim()}|${network.wireName}|${security.wireName}|${host.trim().lowercase()}|${path.trim()}|${serviceName.trim()}|${sni.trim().lowercase()}|${realityPublicKey.trim()}|${realityShortId.trim()}"
     }
 }
+
+enum class SubscriptionFormat(val labelFa: String, val labelEn: String) {
+    PLAIN_TEXT("متن ساده (لینک‌های اشتراک)", "Plain-text share links"),
+    BASE64_STANDARD("Base64 استاندارد", "Standard Base64"),
+    BASE64_URL_SAFE("Base64 ایمن (URL-Safe)", "URL-safe Base64"),
+    JSON("فرمت JSON", "JSON configuration"),
+    INVALID("پاسخ نامعتبر", "Invalid response")
+}
+
+sealed class ClipboardInputType {
+    data object Empty : ClipboardInputType()
+    data class SubscriptionUrl(
+        val url: String,
+        val suggestedTitle: String,
+        val isHttps: Boolean
+    ) : ClipboardInputType()
+    data class SingleShareLink(
+        val protocol: VpnProtocol,
+        val uri: String
+    ) : ClipboardInputType()
+    data class BulkShareLinks(
+        val links: List<String>
+    ) : ClipboardInputType()
+    data class Base64Subscription(
+        val rawBase64: String,
+        val decodedText: String,
+        val isUrlSafe: Boolean
+    ) : ClipboardInputType()
+    data class JsonSubscription(
+        val rawJson: String
+    ) : ClipboardInputType()
+    data class Unrecognized(
+        val rawSnippet: String,
+        val reasonFa: String,
+        val reasonEn: String
+    ) : ClipboardInputType()
+}
+
+data class SubscriptionImportReport(
+    val title: String = "نتیجه دریافت اشتراک",
+    val sourceType: String = "SUBSCRIPTION", // SUBSCRIPTION or CLIPBOARD
+    val detectedFormat: SubscriptionFormat = SubscriptionFormat.PLAIN_TEXT,
+    val totalReceivedCount: Int = 0,
+    val newImportedCount: Int = 0,
+    val duplicateCount: Int = 0,
+    val invalidCount: Int = 0,
+    val statusMessageFa: String = "",
+    val statusMessageEn: String = "",
+    val isSuccess: Boolean = false,
+    val httpStatusCode: Int? = null,
+    val subscriptionItem: SubscriptionItem? = null,
+    val timestampMs: Long = System.currentTimeMillis()
+)
 
 data class SubscriptionItem(
     val id: Long = 0L,
@@ -217,13 +271,40 @@ data class AppSettings(
     val mtu: Int = 1500,
     val splitTunnelMode: SplitTunnelMode = SplitTunnelMode.ALL_APPS,
     val splitTunnelPackages: Set<String> = emptySet(),
-    val languageCode: String = "en-US",
+    val languageCode: String = "fa-IR",
     val themePreference: ThemePreference = ThemePreference.DARK,
-    val usePersianDigits: Boolean = false,
+    val usePersianDigits: Boolean = true,
     val fontScale: Float = 1.0f,
     val autoReconnect: Boolean = true,
     val connectOnBoot: Boolean = false,
-    val onboardingCompleted: Boolean = false
+    val onboardingCompleted: Boolean = true,
+    val profileSortMode: String = "DEFAULT"
+)
+
+enum class QualityTestStage {
+    IDLE,
+    TESTING_TUNNEL,
+    TESTING_LATENCY,
+    TESTING_INTERNET,
+    TESTING_DOWNLOAD,
+    TESTING_UPLOAD,
+    COMPLETED,
+    FAILED
+}
+
+data class ConnectionQualityReport(
+    val stage: QualityTestStage = QualityTestStage.IDLE,
+    val testedThroughVpn: Boolean = false,
+    val tunnelConnected: Boolean = false,
+    val internetReachable: Boolean = false,
+    val latencyMs: Long? = null,
+    val latencyType: LatencyMeasureType = LatencyMeasureType.UNTESTED,
+    val downloadBps: Long? = null,
+    val uploadBps: Long? = null,
+    val summaryMessageFa: String = "",
+    val summaryMessageEn: String = "",
+    val errorDetail: String? = null,
+    val timestampMs: Long = 0L
 )
 
 data class EngineStatistics(

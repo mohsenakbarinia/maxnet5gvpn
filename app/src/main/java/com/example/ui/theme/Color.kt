@@ -2,19 +2,20 @@ package com.example.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// MAXNET5G VPN Premium Cybersecurity Palette
-val CyanPrimary = Color(0xFF00E5FF)
-val CyanPrimaryDark = Color(0xFF00B8D4)
-val EmeraldAccent = Color(0xFF00E676)
+// MAXNET5G VPN V2.5 Premium Midnight & Electric Cyan Palette
+val CyanPrimary = Color(0xFF00DDF0)
+val CyanPrimaryDark = Color(0xFF00A8BA)
+val EmeraldAccent = Color(0xFF00E69B)
 val AmberWarning = Color(0xFFFFB300)
 val CoralError = Color(0xFFFF5252)
 
-// Dark Slate Theme
-val MidnightBackground = Color(0xFF070D19)
-val MidnightSurface = Color(0xFF101B2E)
-val MidnightSurfaceVariant = Color(0xFF182740)
-val OnMidnightText = Color(0xFFECF3FF)
-val OnMidnightMuted = Color(0xFF94A8C6)
+// Deep Midnight Navy Theme (#080D19 / #111D30)
+val MidnightBackground = Color(0xFF080D19)
+val MidnightSurface = Color(0xFF111D30)
+val MidnightSurfaceVariant = Color(0xFF17263F)
+val MidnightBorder = Color(0xFF1E3252)
+val OnMidnightText = Color(0xFFF0F6FF)
+val OnMidnightMuted = Color(0xFF8EA4C8)
 
 // AMOLED Pure Black Theme
 val AmoledBackground = Color(0xFF000000)

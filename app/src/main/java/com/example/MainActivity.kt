@@ -10,6 +10,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -23,6 +24,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BugReport
@@ -33,17 +35,22 @@ import androidx.compose.material.icons.filled.Route
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.ui.Alignment
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -72,24 +79,34 @@ import com.example.ui.screens.QrShareModalDialog
 import com.example.ui.screens.RoutingAndDnsScreen
 import com.example.ui.screens.SettingsAndAboutScreen
 import com.example.ui.screens.SubscriptionsScreen
+import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.NavigationRailItemDefaults
+import com.example.ui.theme.CoralError
+import com.example.ui.theme.CyanPrimary
+import com.example.ui.theme.EmeraldAccent
 import com.example.ui.theme.JetBrainsMonoFontFamily
 import com.example.ui.theme.MaxNetVpnTheme
+import com.example.ui.theme.MidnightSurface
+import com.example.ui.theme.MidnightSurfaceVariant
 import com.example.ui.viewmodel.MaxNetViewModel
+import com.example.util.LocalizationHelper
 import com.example.vpn.MaxNetVpnService
 import kotlinx.coroutines.launch
 
 enum class MaxNetDestination(
     val route: String,
     val titleRes: Int,
+    val titleFa: String,
+    val titleEn: String,
     val icon: ImageVector,
     val testTag: String
 ) {
-    HOME("home", R.string.nav_home, Icons.Default.Home, "nav_tab_home"),
-    PROFILES("profiles", R.string.nav_profiles, Icons.Default.Dns, "nav_tab_profiles"),
-    SUBSCRIPTIONS("subscriptions", R.string.nav_subscriptions, Icons.Default.CloudSync, "nav_tab_subscriptions"),
-    ROUTING("routing", R.string.nav_routing, Icons.Default.Route, "nav_tab_routing"),
-    DIAGNOSTICS("diagnostics", R.string.nav_diagnostics, Icons.Default.BugReport, "nav_tab_diagnostics"),
-    SETTINGS("settings", R.string.nav_settings, Icons.Default.Settings, "nav_tab_settings")
+    HOME("home", R.string.nav_home, "خانه", "Home", Icons.Default.Home, "nav_tab_home"),
+    PROFILES("profiles", R.string.nav_profiles, "پروفایل‌ها", "Profiles", Icons.Default.Dns, "nav_tab_profiles"),
+    SUBSCRIPTIONS("subscriptions", R.string.nav_subscriptions, "اشتراک‌ها", "Subscriptions", Icons.Default.CloudSync, "nav_tab_subscriptions"),
+    ROUTING("routing", R.string.nav_routing, "مسیریابی", "Routing", Icons.Default.Route, "nav_tab_routing"),
+    DIAGNOSTICS("diagnostics", R.string.nav_diagnostics, "عیب‌یابی", "Diagnostics", Icons.Default.BugReport, "nav_tab_diagnostics"),
+    SETTINGS("settings", R.string.nav_settings, "تنظیمات", "Settings", Icons.Default.Settings, "nav_tab_settings")
 }
 
 class MainActivity : ComponentActivity() {
@@ -146,6 +163,8 @@ fun MaxNetAppRoot(viewModel: MaxNetViewModel) {
 
     val settings by viewModel.settingsState.collectAsStateWithLifecycle()
     val profiles by viewModel.filteredProfilesState.collectAsStateWithLifecycle()
+    val totalProfilesCount by viewModel.totalProfilesCountState.collectAsStateWithLifecycle()
+    val availableCountries by viewModel.availableCountriesState.collectAsStateWithLifecycle()
     val activeProfile by viewModel.activeProfileState.collectAsStateWithLifecycle()
     val subscriptions by viewModel.subscriptionsState.collectAsStateWithLifecycle()
     val groups by viewModel.groupsState.collectAsStateWithLifecycle()
@@ -158,15 +177,21 @@ fun MaxNetAppRoot(viewModel: MaxNetViewModel) {
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val protocolFilter by viewModel.protocolFilter.collectAsStateWithLifecycle()
     val groupFilter by viewModel.groupFilter.collectAsStateWithLifecycle()
+    val extraFilter by viewModel.extraFilterState.collectAsStateWithLifecycle()
     val sortMode by viewModel.sortMode.collectAsStateWithLifecycle()
     val selectedBulkIds by viewModel.selectedBulkIds.collectAsStateWithLifecycle()
     val isTestingLatency by viewModel.isTestingLatency.collectAsStateWithLifecycle()
+    val latencyTestProgress by viewModel.latencyTestProgressState.collectAsStateWithLifecycle()
+    val liveMeasuredProfileIds by viewModel.liveMeasuredProfileIdsState.collectAsStateWithLifecycle()
     val isRefreshingSubs by viewModel.isRefreshingSubscriptions.collectAsStateWithLifecycle()
     val installedApps by viewModel.installedApps.collectAsStateWithLifecycle()
     val pendingDeepLink by viewModel.pendingDeepLinkUri.collectAsStateWithLifecycle()
     val statusBanner by viewModel.statusBannerMessage.collectAsStateWithLifecycle()
     val configPreview by viewModel.configPreviewDialog.collectAsStateWithLifecycle()
     val qrShareProfile by viewModel.qrShareProfile.collectAsStateWithLifecycle()
+    val pendingClipboardSub by viewModel.pendingClipboardSubscription.collectAsStateWithLifecycle()
+    val subscriptionImportReport by viewModel.subscriptionImportReportState.collectAsStateWithLifecycle()
+    val qualityReport by viewModel.qualityReportState.collectAsStateWithLifecycle()
 
     var currentTab by rememberSaveable { mutableStateOf(MaxNetDestination.HOME) }
 
@@ -239,7 +264,8 @@ fun MaxNetAppRoot(viewModel: MaxNetViewModel) {
         }
     }
 
-    val usePersianDigits = settings.usePersianDigits || settings.languageCode.startsWith("fa", ignoreCase = true)
+    val isFa = settings.languageCode.startsWith("fa", ignoreCase = true)
+    val usePersianDigits = settings.usePersianDigits || isFa
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val isExpandedScreen = maxWidth >= 640.dp
@@ -249,23 +275,34 @@ fun MaxNetAppRoot(viewModel: MaxNetViewModel) {
             snackbarHost = { SnackbarHost(snackbarHostState) },
             bottomBar = {
                 if (!isExpandedScreen) {
-                    NavigationBar {
+                    NavigationBar(
+                        containerColor = MidnightSurface
+                    ) {
                         MaxNetDestination.entries.forEach { dest ->
+                            val navLabel = if (isFa) dest.titleFa else dest.titleEn
                             NavigationBarItem(
                                 selected = currentTab == dest,
                                 onClick = { currentTab = dest },
                                 icon = {
                                     Icon(
                                         imageVector = dest.icon,
-                                        contentDescription = stringResource(dest.titleRes)
+                                        contentDescription = navLabel
                                     )
                                 },
                                 label = {
                                     Text(
-                                        text = stringResource(dest.titleRes),
+                                        text = navLabel,
+                                        style = MaterialTheme.typography.labelSmall,
                                         maxLines = 1
                                     )
                                 },
+                                colors = NavigationBarItemDefaults.colors(
+                                    selectedIconColor = CyanPrimary,
+                                    selectedTextColor = CyanPrimary,
+                                    indicatorColor = MidnightSurfaceVariant,
+                                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                ),
                                 modifier = Modifier.testTag(dest.testTag)
                             )
                         }
@@ -279,18 +316,27 @@ fun MaxNetAppRoot(viewModel: MaxNetViewModel) {
                     .padding(innerPadding)
             ) {
                 if (isExpandedScreen) {
-                    NavigationRail(modifier = Modifier.fillMaxHeight()) {
+                    NavigationRail(
+                        modifier = Modifier.fillMaxHeight(),
+                        containerColor = MidnightSurface
+                    ) {
                         MaxNetDestination.entries.forEach { dest ->
+                            val navLabel = if (isFa) dest.titleFa else dest.titleEn
                             NavigationRailItem(
                                 selected = currentTab == dest,
                                 onClick = { currentTab = dest },
                                 icon = {
                                     Icon(
                                         imageVector = dest.icon,
-                                        contentDescription = stringResource(dest.titleRes)
+                                        contentDescription = navLabel
                                     )
                                 },
-                                label = { Text(stringResource(dest.titleRes)) },
+                                label = { Text(navLabel) },
+                                colors = NavigationRailItemDefaults.colors(
+                                    selectedIconColor = CyanPrimary,
+                                    selectedTextColor = CyanPrimary,
+                                    indicatorColor = MidnightSurfaceVariant
+                                ),
                                 modifier = Modifier.testTag(dest.testTag)
                             )
                         }
@@ -304,11 +350,15 @@ fun MaxNetAppRoot(viewModel: MaxNetViewModel) {
                                 connectionState = connectionState,
                                 activeProfile = activeProfile,
                                 statistics = statistics,
+                                diagnostics = diagnostics,
+                                qualityReport = qualityReport,
                                 speedHistory = speedHistory,
                                 settings = settings,
                                 onToggleConnect = handleConnectToggle,
                                 onTestActiveLatency = { viewModel.testSingleProfileLatency(it) },
                                 onAutoSelectBest = { viewModel.testAllProfilesLatency(autoSelectBest = true) },
+                                onRunQualityTest = viewModel::runConnectionQualityTest,
+                                onCancelQualityTest = viewModel::cancelConnectionQualityTest,
                                 onSwitchRoutingMode = { viewModel.setRoutingMode(it) },
                                 onSwitchEngine = { viewModel.setActiveEngine(it) },
                                 onToggleLanguage = {
@@ -316,6 +366,7 @@ fun MaxNetAppRoot(viewModel: MaxNetViewModel) {
                                     viewModel.setLanguage(nextLang)
                                 },
                                 onNavigateToProfiles = { currentTab = MaxNetDestination.PROFILES },
+                                onNavigateToSettings = { currentTab = MaxNetDestination.SETTINGS },
                                 onCompleteOnboarding = { viewModel.completeOnboarding() }
                             )
                         }
@@ -331,11 +382,37 @@ fun MaxNetAppRoot(viewModel: MaxNetViewModel) {
                                 selectedBulkIds = selectedBulkIds,
                                 isTestingLatency = isTestingLatency,
                                 usePersianDigits = usePersianDigits,
+                                totalProfilesCount = totalProfilesCount,
+                                connectionState = connectionState,
+                                extraFilter = extraFilter,
+                                availableCountries = availableCountries,
+                                latencyTestProgress = latencyTestProgress,
+                                liveMeasuredProfileIds = liveMeasuredProfileIds,
                                 onSearchQueryChange = viewModel::setSearchQuery,
                                 onProtocolFilterChange = viewModel::setProtocolFilter,
                                 onGroupFilterChange = viewModel::setGroupFilter,
+                                onFavoritesFilterChange = viewModel::setFavoritesOnlyFilter,
+                                onPinnedFilterChange = viewModel::setPinnedOnlyFilter,
+                                onCountryFilterChange = viewModel::setCountryFilter,
+                                onConnectionFilterChange = viewModel::setConnectionStatusFilter,
+                                onResetAllFilters = viewModel::clearAllFilters,
                                 onSortModeChange = viewModel::setSortMode,
                                 onSelectProfile = viewModel::selectProfile,
+                                onConnectToProfile = { targetProfile ->
+                                    viewModel.selectProfile(targetProfile.id)
+                                    val activeStates = setOf(
+                                        VpnConnectionState.PREPARING,
+                                        VpnConnectionState.STARTING_ENGINE,
+                                        VpnConnectionState.CONNECTING,
+                                        VpnConnectionState.VERIFYING,
+                                        VpnConnectionState.CONNECTED,
+                                        VpnConnectionState.RECONNECTING
+                                    )
+                                    if (connectionState in activeStates) {
+                                        viewModel.disconnectSession()
+                                    }
+                                    handleConnectToggle()
+                                },
                                 onSaveProfile = { viewModel.saveProfile(it) },
                                 onDuplicateProfile = viewModel::duplicateProfile,
                                 onDeleteProfile = viewModel::deleteProfile,
@@ -348,6 +425,7 @@ fun MaxNetAppRoot(viewModel: MaxNetViewModel) {
                                 onDecodeQrBitmap = viewModel::decodeAndImportQrBitmap,
                                 onTestSingleLatency = viewModel::testSingleProfileLatency,
                                 onTestAllLatency = { viewModel.testAllProfilesLatency(autoSelectBest = false) },
+                                onTestByScope = { scope -> viewModel.testProfilesByScope(scope, autoSelectBest = false) },
                                 onCancelLatencyTest = viewModel::cancelLatencyTesting,
                                 onShowCoreJson = viewModel::showCoreConfigPreview,
                                 onShowQrCode = viewModel::showQrCodeModal,
@@ -493,6 +571,212 @@ fun MaxNetAppRoot(viewModel: MaxNetViewModel) {
         QrShareModalDialog(
             profile = profile,
             onDismiss = viewModel::dismissQrCodeModal
+        )
+    }
+
+    // Automatic Clipboard Subscription URL Confirmation Dialog
+    pendingClipboardSub?.let { detectedSub ->
+        var subTitle by remember(detectedSub.url) { mutableStateOf(detectedSub.suggestedTitle) }
+        var autoUpdate by remember(detectedSub.url) { mutableStateOf(true) }
+
+        AlertDialog(
+            onDismissRequest = viewModel::dismissClipboardSubscriptionImport,
+            modifier = Modifier.testTag("clipboard_subscription_confirm_dialog"),
+            title = {
+                Text(
+                    text = "شناسایی لینک اشتراک",
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = "لینک اشتراک شناسایی شد. آیا می‌خواهید آن را اضافه کنید؟",
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = subTitle,
+                        onValueChange = { subTitle = it },
+                        label = { Text("نام اشتراک (Subscription Name)") },
+                        singleLine = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("clipboard_sub_title_input")
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "بروزرسانی خودکار (Auto Update)",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Switch(
+                            checked = autoUpdate,
+                            onCheckedChange = { autoUpdate = it }
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.confirmClipboardSubscriptionImport(
+                            customTitle = subTitle,
+                            autoUpdate = autoUpdate,
+                            onNavigateToSubscriptionFlow = {
+                                currentTab = MaxNetDestination.SUBSCRIPTIONS
+                            }
+                        )
+                    },
+                    modifier = Modifier.testTag("confirm_clipboard_subscription_button")
+                ) {
+                    Text("افزودن اشتراک (Add subscription)")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = viewModel::dismissClipboardSubscriptionImport,
+                    modifier = Modifier.testTag("cancel_clipboard_subscription_button")
+                ) {
+                    Text("انصراف (Cancel)")
+                }
+            }
+        )
+    }
+
+    // Persian Subscription & Configuration Import Results Dialog
+    subscriptionImportReport?.let { report ->
+        AlertDialog(
+            onDismissRequest = viewModel::dismissSubscriptionImportReport,
+            modifier = Modifier.testTag("subscription_import_result_dialog"),
+            title = {
+                Text(
+                    text = report.title,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (report.isSuccess) {
+                            EmeraldAccent.copy(alpha = 0.14f)
+                        } else {
+                            CoralError.copy(alpha = 0.14f)
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text(
+                                text = "وضعیت دریافت اطلاعات",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = report.statusMessageFa,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = if (report.isSuccess) EmeraldAccent else CoralError,
+                                modifier = Modifier.testTag("import_report_status_text")
+                            )
+                        }
+                    }
+
+                    HorizontalDivider(color = MidnightSurfaceVariant)
+
+                    ImportResultStatRow(
+                        label = "تعداد کانفیگ‌های دریافت‌شده",
+                        value = LocalizationHelper.formatDigits(report.totalReceivedCount.toString(), usePersianDigits),
+                        testTag = "import_report_total_count"
+                    )
+                    ImportResultStatRow(
+                        label = "تعداد کانفیگ‌های جدید",
+                        value = LocalizationHelper.formatDigits(report.newImportedCount.toString(), usePersianDigits),
+                        valueColor = EmeraldAccent,
+                        testTag = "import_report_new_count"
+                    )
+                    ImportResultStatRow(
+                        label = "تعداد موارد تکراری",
+                        value = LocalizationHelper.formatDigits(report.duplicateCount.toString(), usePersianDigits),
+                        testTag = "import_report_duplicate_count"
+                    )
+                    ImportResultStatRow(
+                        label = "تعداد کانفیگ‌های نامعتبر",
+                        value = LocalizationHelper.formatDigits(report.invalidCount.toString(), usePersianDigits),
+                        valueColor = if (report.invalidCount > 0) CoralError else MaterialTheme.colorScheme.onSurface,
+                        testTag = "import_report_invalid_count"
+                    )
+                }
+            },
+            confirmButton = {
+                if (report.isSuccess && currentTab != MaxNetDestination.PROFILES) {
+                    Button(
+                        onClick = {
+                            viewModel.dismissSubscriptionImportReport()
+                            currentTab = MaxNetDestination.PROFILES
+                        },
+                        modifier = Modifier.testTag("view_imported_profiles_button")
+                    ) {
+                        Text("مشاهده پروفایل‌ها")
+                    }
+                } else {
+                    Button(
+                        onClick = viewModel::dismissSubscriptionImportReport,
+                        modifier = Modifier.testTag("dismiss_import_report_button")
+                    ) {
+                        Text("تأیید")
+                    }
+                }
+            },
+            dismissButton = {
+                if (report.isSuccess && currentTab != MaxNetDestination.PROFILES) {
+                    TextButton(
+                        onClick = viewModel::dismissSubscriptionImportReport,
+                        modifier = Modifier.testTag("dismiss_import_report_button")
+                    ) {
+                        Text("بستن")
+                    }
+                }
+            }
+        )
+    }
+}
+
+@Composable
+private fun ImportResultStatRow(
+    label: String,
+    value: String,
+    valueColor: androidx.compose.ui.graphics.Color = MaterialTheme.colorScheme.onSurface,
+    testTag: String
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.titleMedium,
+            fontFamily = JetBrainsMonoFontFamily,
+            fontWeight = FontWeight.Bold,
+            color = valueColor,
+            modifier = Modifier.testTag(testTag)
         )
     }
 }

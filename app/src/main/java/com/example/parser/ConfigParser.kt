@@ -1,11 +1,14 @@
 package com.example.parser
 
+import com.example.domain.model.ClipboardInputType
 import com.example.domain.model.SecurityType
 import com.example.domain.model.ServerProfile
+import com.example.domain.model.SubscriptionFormat
 import com.example.domain.model.TransportType
 import com.example.domain.model.VpnProtocol
 import org.json.JSONArray
 import org.json.JSONObject
+import java.net.URI
 import java.net.URLDecoder
 import java.net.URLEncoder
 import java.util.Base64
@@ -18,13 +21,16 @@ data class ParseFailure(
 data class BatchParseResult(
     val profiles: List<ServerProfile>,
     val failures: List<ParseFailure>,
-    val duplicatesSkipped: Int
+    val duplicatesSkipped: Int,
+    val detectedFormat: SubscriptionFormat = SubscriptionFormat.PLAIN_TEXT,
+    val totalReceivedCount: Int = profiles.size + duplicatesSkipped + failures.size
 )
 
 /**
- * Pure Kotlin VPN Configuration Parser & Share-Link Serializer.
+ * Pure Kotlin VPN Configuration Parser, Clipboard Classifier & Subscription Format Detector.
  * Supports VLESS, VMess (v2rayN JSON & URI), Trojan, Shadowsocks (SIP002, Legacy Base64, 2022 Blake3),
- * Hysteria2 (hy2:// & hysteria2://), WireGuard (wireguard://), Xray JSON outbounds, and Base64 subscription payloads.
+ * Hysteria2 (hy2:// & hysteria2://), WireGuard (wireguard://), Xray/sing-box JSON outbounds,
+ * and Standard / URL-safe Base64 subscription payloads.
  */
 object ConfigParser {
 
@@ -33,22 +39,281 @@ object ConfigParser {
         "hysteria2://", "hy2://", "wireguard://", "tuic://"
     )
 
+    private val htmlIndicatorRegex = Regex(
+        pattern = "(<!doctype\\s+html|<html\\b|<head\\b|<body\\b|<title\\b|<form\\b|<script\\b|cloudflare|403\\s+forbidden|404\\s+not\\s+found)",
+        option = RegexOption.IGNORE_CASE
+    )
+
+    /**
+     * Inspects clipboard or pasted text and classifies the input:
+     * - https:// or http:// -> SubscriptionUrl
+     * - vless://, vmess://, trojan://, ss://, hysteria2:// -> SingleShareLink
+     * - Multiple supported share links -> BulkShareLinks
+     * - Base64 text -> Base64Subscription (safe single-pass format detection)
+     * - JSON -> JsonSubscription
+     * - Empty or Unrecognized -> Empty / Unrecognized
+     */
+    fun classifyClipboardInput(rawClipboard: String): ClipboardInputType {
+        val trimmed = rawClipboard.trim()
+        if (trimmed.isEmpty()) {
+            return ClipboardInputType.Empty
+        }
+
+        val nonCommentLines = trimmed
+            .lines()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() && !it.startsWith("#") && !it.startsWith("//") }
+
+        if (nonCommentLines.isEmpty()) {
+            return ClipboardInputType.Empty
+        }
+
+        // 1. Check if input is a single HTTP or HTTPS subscription URL
+        if (nonCommentLines.size == 1) {
+            val single = nonCommentLines.first()
+            if (single.startsWith("https://", ignoreCase = true) ||
+                single.startsWith("http://", ignoreCase = true)
+            ) {
+                val parsedUrl = validateSubscriptionUrl(single)
+                if (parsedUrl.isSuccess) {
+                    val uri = parsedUrl.getOrThrow()
+                    val fragmentTitle = single.substringAfter("#", "").let {
+                        if (it.isNotBlank()) percentDecode(it).trim() else ""
+                    }
+                    val hostTitle = uri.host?.lowercase().orEmpty()
+                    val suggestedTitle = fragmentTitle.ifBlank {
+                        if (hostTitle.isNotBlank()) "Sub ($hostTitle)" else "Subscription"
+                    }
+                    val cleanUrl = single.substringBefore("#").trim()
+                    return ClipboardInputType.SubscriptionUrl(
+                        url = cleanUrl,
+                        suggestedTitle = suggestedTitle,
+                        isHttps = cleanUrl.startsWith("https://", ignoreCase = true)
+                    )
+                } else {
+                    val err = parsedUrl.exceptionOrNull()?.message ?: "Invalid subscription URL"
+                    return ClipboardInputType.Unrecognized(
+                        rawSnippet = single.take(64),
+                        reasonFa = "آدرس لینک اشتراک نامعتبر است: $err",
+                        reasonEn = "Invalid subscription URL: $err"
+                    )
+                }
+            }
+        }
+
+        // 2. Check if input consists of one or more supported share links
+        val splitShareLinks = nonCommentLines
+            .flatMap { splitMultipleUrisInLine(it) }
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+
+        val shareLinksOnly = splitShareLinks.filter { line ->
+            val lower = line.lowercase()
+            supportedSchemes.any { lower.startsWith(it) }
+        }
+
+        if (shareLinksOnly.isNotEmpty() && shareLinksOnly.size == splitShareLinks.size) {
+            if (shareLinksOnly.size == 1) {
+                val singleUri = shareLinksOnly.first()
+                val scheme = singleUri.substringBefore("://").lowercase()
+                val protocol = VpnProtocol.fromScheme(scheme) ?: VpnProtocol.VLESS
+                return ClipboardInputType.SingleShareLink(protocol = protocol, uri = singleUri)
+            }
+            return ClipboardInputType.BulkShareLinks(links = shareLinksOnly)
+        }
+
+        // If some lines are share links and some are other lines, treat as bulk share links if at least one valid scheme exists
+        if (shareLinksOnly.isNotEmpty()) {
+            return ClipboardInputType.BulkShareLinks(links = splitShareLinks)
+        }
+
+        // 3. Check if input is JSON subscription / config
+        if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+            return if (isCompatibleJsonPayload(trimmed)) {
+                ClipboardInputType.JsonSubscription(rawJson = trimmed)
+            } else {
+                ClipboardInputType.Unrecognized(
+                    rawSnippet = trimmed.take(64),
+                    reasonFa = "ساختار JSON کلیپ‌بورد با فرمت کانفیگ‌های VPN سازگار نیست",
+                    reasonEn = "Clipboard JSON is not a compatible VPN configuration"
+                )
+            }
+        }
+
+        // 4. Reject HTML pages early
+        if (isHtmlPayload(trimmed)) {
+            return ClipboardInputType.Unrecognized(
+                rawSnippet = "HTML Document",
+                reasonFa = "محتوای کلیپ‌بورد یک صفحه وب (HTML) است، نه کانفیگ VPN",
+                reasonEn = "Clipboard contains an HTML webpage instead of VPN configuration"
+            )
+        }
+
+        // 5. Attempt safe single-pass Base64 subscription detection
+        val isUrlSafeCandidate = trimmed.contains('-') || trimmed.contains('_') ||
+            (trimmed.replace("\r", "").replace("\n", "").replace(" ", "").length % 4 != 0)
+        val decoded = decodeBase64Flexible(trimmed)
+        if (decoded != null && !isHtmlPayload(decoded)) {
+            val decodedTrimmed = decoded.trim()
+            if (containsAnyScheme(decodedTrimmed) || isCompatibleJsonPayload(decodedTrimmed)) {
+                return ClipboardInputType.Base64Subscription(
+                    rawBase64 = trimmed,
+                    decodedText = decodedTrimmed,
+                    isUrlSafe = isUrlSafeCandidate
+                )
+            }
+        }
+
+        return ClipboardInputType.Unrecognized(
+            rawSnippet = trimmed.take(64),
+            reasonFa = "لینک اشتراک یا کانفیگ معتبری در کلیپ‌بورد شناسایی نشد",
+            reasonEn = "No valid subscription URL or VPN configuration detected in clipboard"
+        )
+    }
+
+    /**
+     * Validates an HTTP/HTTPS subscription URL including custom ports (e.g. :2096) and /sub/{token} paths.
+     */
+    fun validateSubscriptionUrl(rawUrl: String): Result<URI> {
+        val cleaned = rawUrl.trim().substringBefore("#").trim()
+        if (cleaned.isEmpty() || cleaned.contains(" ") || cleaned.contains("\n")) {
+            return Result.failure(IllegalArgumentException("URL contains invalid whitespace"))
+        }
+        return try {
+            val uri = URI(cleaned)
+            val scheme = uri.scheme?.lowercase()
+            if (scheme != "https" && scheme != "http") {
+                return Result.failure(IllegalArgumentException("Unsupported URL scheme (expected https:// or http://)"))
+            }
+            val host = uri.host
+            if (host.isNullOrBlank()) {
+                return Result.failure(IllegalArgumentException("Subscription URL is missing a valid host"))
+            }
+            val port = uri.port
+            if (port != -1 && port !in 1..65535) {
+                return Result.failure(IllegalArgumentException("Invalid port number: $port"))
+            }
+            Result.success(uri)
+        } catch (e: Exception) {
+            Result.failure(IllegalArgumentException("Malformed subscription URL: ${e.message}"))
+        }
+    }
+
+    /**
+     * Automatically identifies subscription response format in a single safe pass:
+     * A. Plain-text subscription (multiple share links separated by newline)
+     * B. Standard Base64 subscription
+     * C. URL-safe Base64 subscription (URL-safe chars '-', '_' or missing '=' padding)
+     * D. JSON subscription (Xray / sing-box outbounds or array of configs)
+     * E. Invalid response (HTML login pages, error pages, empty or unsupported formats)
+     */
+    fun detectSubscriptionFormat(rawBody: String): Pair<SubscriptionFormat, String> {
+        val trimmed = rawBody.trim().removePrefix("\uFEFF").trim()
+        if (trimmed.isEmpty()) {
+            return SubscriptionFormat.INVALID to ""
+        }
+
+        // E. Detect HTML login pages, captive portals, and error pages
+        if (isHtmlPayload(trimmed)) {
+            return SubscriptionFormat.INVALID to trimmed
+        }
+
+        // A. Detect plain-text share links directly (note: vmess:// links start with "vmess://",
+        // so their inner Base64 JSON is NOT decoded at the subscription outer layer!)
+        if (containsAnySchemeAtLineStart(trimmed)) {
+            return SubscriptionFormat.PLAIN_TEXT to trimmed
+        }
+
+        // D. Detect compatible JSON subscription formats
+        if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+            return if (isCompatibleJsonPayload(trimmed)) {
+                SubscriptionFormat.JSON to trimmed
+            } else {
+                SubscriptionFormat.INVALID to trimmed
+            }
+        }
+
+        // B & C. Single-pass Base64 decoding (Standard or URL-safe Base64)
+        val compact = trimmed.replace("\r", "").replace("\n", "").replace(" ", "")
+        val hasUrlSafeChars = compact.contains('-') || compact.contains('_')
+        val hasMissingPadding = (compact.length % 4 != 0) && !compact.endsWith("=")
+        val decoded = decodeBase64Flexible(compact)
+        if (decoded != null) {
+            val decodedTrimmed = decoded.trim().removePrefix("\uFEFF").trim()
+            if (isHtmlPayload(decodedTrimmed)) {
+                return SubscriptionFormat.INVALID to decodedTrimmed
+            }
+            if (containsAnyScheme(decodedTrimmed) || isCompatibleJsonPayload(decodedTrimmed)) {
+                val format = if (hasUrlSafeChars || hasMissingPadding) {
+                    SubscriptionFormat.BASE64_URL_SAFE
+                } else {
+                    SubscriptionFormat.BASE64_STANDARD
+                }
+                return format to decodedTrimmed
+            }
+        }
+
+        return SubscriptionFormat.INVALID to trimmed
+    }
+
+    fun isHtmlPayload(text: String): Boolean {
+        val sample = text.trim().take(1024)
+        if (sample.startsWith("<!DOCTYPE html", ignoreCase = true) ||
+            sample.startsWith("<html", ignoreCase = true) ||
+            sample.startsWith("<?xml", ignoreCase = true)
+        ) {
+            return true
+        }
+        return sample.startsWith("<") && htmlIndicatorRegex.containsMatchIn(sample)
+    }
+
+    private fun isCompatibleJsonPayload(text: String): Boolean {
+        val trimmed = text.trim()
+        return try {
+            if (trimmed.startsWith("[")) {
+                val arr = JSONArray(trimmed)
+                if (arr.length() == 0) return false
+                val first = arr.get(0)
+                when (first) {
+                    is String -> containsAnyScheme(first)
+                    is JSONObject -> first.has("outbounds") || first.has("protocol") || first.has("type") || first.has("server") || first.has("address")
+                    else -> false
+                }
+            } else if (trimmed.startsWith("{")) {
+                val obj = JSONObject(trimmed)
+                obj.has("outbounds") || obj.has("servers") || obj.has("profiles") || obj.has("links") ||
+                    (obj.has("protocol") && obj.has("settings")) ||
+                    (obj.has("type") && obj.has("server"))
+            } else {
+                false
+            }
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     /**
      * Decodes standard or URL-safe Base64 with or without padding, ignoring whitespace.
      */
     fun decodeBase64Flexible(input: String): String? {
-        val cleaned = input.trim().replace("\r", "").replace("\n", "").replace(" ", "")
-        if (cleaned.isEmpty()) return null
+        val cleaned = input.trim().replace("\r", "").replace("\n", "").replace("\t", "").replace(" ", "")
+        if (cleaned.length < 4) return null
+        // Must only contain valid Base64 / URL-safe Base64 characters
+        if (!cleaned.all { it.isLetterOrDigit() || it == '+' || it == '/' || it == '-' || it == '_' || it == '=' }) {
+            return null
+        }
         return try {
             val normalized = cleaned
                 .replace('-', '+')
                 .replace('_', '/')
+                .trimEnd('=')
             val padNeeded = (4 - (normalized.length % 4)) % 4
+            if (normalized.length % 4 == 1) return null
             val padded = normalized + "=".repeat(padNeeded)
             val bytes = Base64.getDecoder().decode(padded)
             val decoded = String(bytes, Charsets.UTF_8)
-            // Reject binary garbage if it contains NUL bytes
-            if (decoded.any { it == '\u0000' }) null else decoded
+            // Reject binary garbage if it contains NUL or excessive control characters
+            if (decoded.any { it == '\u0000' || (it.code in 1..8) || (it.code in 14..31) }) null else decoded
         } catch (_: Exception) {
             null
         }
@@ -61,7 +326,6 @@ object ConfigParser {
 
     fun percentDecode(value: String): String {
         return try {
-            // Preserve '+' inside remarks if needed or standard URL decode
             URLDecoder.decode(value, "UTF-8")
         } catch (_: Exception) {
             value
@@ -78,7 +342,7 @@ object ConfigParser {
 
     /**
      * Parses a single text block or subscription body containing one or more configurations,
-     * Base64-encoded subscription lists, or an Xray JSON configuration.
+     * Base64-encoded subscription lists, or a compatible JSON configuration.
      */
     fun parseBatch(
         rawInput: String,
@@ -88,38 +352,57 @@ object ConfigParser {
     ): BatchParseResult {
         val trimmed = rawInput.trim()
         if (trimmed.isEmpty()) {
-            return BatchParseResult(emptyList(), listOf(ParseFailure("", "Empty input")), 0)
-        }
-
-        // Reject HTML bodies (e.g. captive portals or error pages from subscription links)
-        if (trimmed.startsWith("<!DOCTYPE html", ignoreCase = true) ||
-            trimmed.startsWith("<html", ignoreCase = true)
-        ) {
             return BatchParseResult(
-                emptyList(),
-                listOf(ParseFailure("HTML Document", "Received HTML webpage instead of VPN configuration")),
-                0
+                profiles = emptyList(),
+                failures = listOf(ParseFailure("", "Empty input (پاسخ دریافتی خالی است)")),
+                duplicatesSkipped = 0,
+                detectedFormat = SubscriptionFormat.INVALID,
+                totalReceivedCount = 0
             )
         }
 
-        // Check if input is an Xray JSON object or array
-        if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
-            val jsonResult = parseXrayJson(trimmed, defaultGroup, subscriptionId)
-            if (jsonResult.profiles.isNotEmpty() || jsonResult.failures.isNotEmpty()) {
-                return deduplicate(jsonResult.profiles, jsonResult.failures, existingFingerprintKeys)
-            }
+        // Reject HTML bodies (e.g. captive portals, login pages, or error pages from subscription links)
+        if (isHtmlPayload(trimmed)) {
+            return BatchParseResult(
+                profiles = emptyList(),
+                failures = listOf(ParseFailure("HTML Document", "Received HTML webpage instead of VPN configuration (دریافت صفحه وب HTML به جای کانفیگ)")),
+                duplicatesSkipped = 0,
+                detectedFormat = SubscriptionFormat.INVALID,
+                totalReceivedCount = 0
+            )
         }
 
-        // Check if the entire body is a Base64-encoded subscription payload
-        val candidateText = if (!containsAnyScheme(trimmed)) {
-            val decoded = decodeBase64Flexible(trimmed)
-            if (decoded != null && (containsAnyScheme(decoded) || decoded.trim().startsWith("{"))) {
-                decoded
-            } else {
-                trimmed
+        val (detectedFormat, candidateText) = detectSubscriptionFormat(trimmed)
+
+        if (detectedFormat == SubscriptionFormat.INVALID && !containsAnyScheme(trimmed)) {
+            // Still parse line-by-line if user pasted malformed share link(s) so each line failure is reported accurately
+            val rawLines = trimmed.lines().map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("#") && !it.startsWith("//") }
+            val lineFailures = rawLines.map { line ->
+                val err = parseSingleUri(line, defaultGroup, subscriptionId).exceptionOrNull()?.message
+                    ?: "Unsupported or invalid configuration format"
+                ParseFailure(line.take(64), err)
             }
-        } else {
-            trimmed
+            return BatchParseResult(
+                profiles = emptyList(),
+                failures = lineFailures.ifEmpty { listOf(ParseFailure(trimmed.take(64), "Unsupported subscription format")) },
+                duplicatesSkipped = 0,
+                detectedFormat = SubscriptionFormat.INVALID,
+                totalReceivedCount = lineFailures.size
+            )
+        }
+
+        // Check if resolved payload is JSON object or array
+        val trimmedCandidate = candidateText.trim()
+        if (trimmedCandidate.startsWith("{") || trimmedCandidate.startsWith("[")) {
+            val jsonResult = parseXrayJson(trimmedCandidate, defaultGroup, subscriptionId)
+            if (jsonResult.profiles.isNotEmpty() || jsonResult.failures.isNotEmpty()) {
+                return deduplicate(
+                    profiles = jsonResult.profiles,
+                    failures = jsonResult.failures,
+                    existingKeys = existingFingerprintKeys,
+                    detectedFormat = if (detectedFormat == SubscriptionFormat.PLAIN_TEXT) SubscriptionFormat.JSON else detectedFormat
+                )
+            }
         }
 
         val lines = candidateText
@@ -141,13 +424,14 @@ object ConfigParser {
             )
         }
 
-        return deduplicate(parsedProfiles, failures, existingFingerprintKeys)
+        return deduplicate(parsedProfiles, failures, existingFingerprintKeys, detectedFormat)
     }
 
     private fun deduplicate(
         profiles: List<ServerProfile>,
         failures: List<ParseFailure>,
-        existingKeys: Set<String>
+        existingKeys: Set<String>,
+        detectedFormat: SubscriptionFormat = SubscriptionFormat.PLAIN_TEXT
     ): BatchParseResult {
         val seen = existingKeys.toMutableSet()
         val unique = mutableListOf<ServerProfile>()
@@ -160,12 +444,26 @@ object ConfigParser {
                 skipped++
             }
         }
-        return BatchParseResult(unique, failures, skipped)
+        val totalReceived = unique.size + skipped + failures.size
+        return BatchParseResult(
+            profiles = unique,
+            failures = failures,
+            duplicatesSkipped = skipped,
+            detectedFormat = detectedFormat,
+            totalReceivedCount = totalReceived
+        )
     }
 
     private fun containsAnyScheme(text: String): Boolean {
         val lower = text.lowercase()
         return supportedSchemes.any { lower.contains(it) }
+    }
+
+    private fun containsAnySchemeAtLineStart(text: String): Boolean {
+        return text.lineSequence()
+            .map { it.trim().lowercase() }
+            .filter { it.isNotEmpty() && !it.startsWith("#") && !it.startsWith("//") }
+            .any { line -> supportedSchemes.any { scheme -> line.startsWith(scheme) } }
     }
 
     private fun splitMultipleUrisInLine(line: String): List<String> {
@@ -183,7 +481,7 @@ object ConfigParser {
         val cleaned = rawUri.trim()
         val schemeIndex = cleaned.indexOf("://")
         if (schemeIndex <= 0) {
-            return Result.failure(IllegalArgumentException("Missing URI scheme (expected vless://, vmess://, trojan://, ss://)"))
+            return Result.failure(IllegalArgumentException("Missing URI scheme (expected vless://, vmess://, trojan://, ss://, hysteria2://)"))
         }
         val scheme = cleaned.substring(0, schemeIndex).lowercase()
         return when (scheme) {
@@ -218,6 +516,20 @@ object ConfigParser {
         group: String,
         subscriptionId: Long?
     ): Result<ServerProfile> {
+        // Support both hysteria2://password@host:port?... and hysteria2://host:port?auth=password&...
+        val bodyAfterScheme = uri.substringAfter("://")
+        val withoutFragment = bodyAfterScheme.substringBeforeLast("#")
+        val authority = withoutFragment.substringBefore("?").removeSuffix("/")
+        if (!authority.contains("@") && withoutFragment.contains("?")) {
+            val query = withoutFragment.substringAfter("?")
+            val params = parseQueryParams(query)
+            val authPassword = params["auth"] ?: params["password"]
+            if (!authPassword.isNullOrBlank()) {
+                val scheme = uri.substringBefore("://")
+                val normalizedUri = "$scheme://${percentEncode(authPassword)}@$bodyAfterScheme"
+                return parseStandardUserHostUri(normalizedUri, VpnProtocol.HYSTERIA2, group, subscriptionId)
+            }
+        }
         return parseStandardUserHostUri(uri, VpnProtocol.HYSTERIA2, group, subscriptionId)
     }
 
@@ -528,7 +840,8 @@ object ConfigParser {
     }
 
     /**
-     * Parses raw Xray JSON configurations and extracts proxy outbounds into ServerProfiles.
+     * Parses compatible subscription JSON configurations (Xray JSON outbounds, sing-box outbounds,
+     * or JSON arrays of share links) and extracts proxy outbounds into ServerProfiles.
      */
     private fun parseXrayJson(
         rawJson: String,
@@ -538,25 +851,98 @@ object ConfigParser {
         val profiles = mutableListOf<ServerProfile>()
         val failures = mutableListOf<ParseFailure>()
         try {
-            val rootObjects = if (rawJson.trim().startsWith("[")) {
-                val arr = JSONArray(rawJson)
+            val trimmed = rawJson.trim()
+            if (trimmed.startsWith("[")) {
+                val arr = JSONArray(trimmed)
+                // Support JSON array of share link strings ["vless://...", "vmess://..."]
+                if (arr.length() > 0 && arr.opt(0) is String) {
+                    for (i in 0 until arr.length()) {
+                        val link = arr.optString(i, "").trim()
+                        if (link.isNotEmpty()) {
+                            parseSingleUri(link, defaultGroup, subscriptionId).fold(
+                                onSuccess = { profiles.add(it) },
+                                onFailure = { err -> failures.add(ParseFailure(link.take(64), err.message ?: "Invalid URI in JSON array")) }
+                            )
+                        }
+                    }
+                    return BatchParseResult(profiles, failures, 0, SubscriptionFormat.JSON)
+                }
+            }
+
+            val rootObjects = if (trimmed.startsWith("[")) {
+                val arr = JSONArray(trimmed)
                 (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }
             } else {
-                listOf(JSONObject(rawJson))
+                listOf(JSONObject(trimmed))
             }
 
             for (root in rootObjects) {
+                // Support JSON object containing a "links" or "profiles" string array
+                val linksArr = root.optJSONArray("links") ?: root.optJSONArray("profiles")
+                if (linksArr != null && linksArr.length() > 0 && linksArr.opt(0) is String) {
+                    for (i in 0 until linksArr.length()) {
+                        val link = linksArr.optString(i, "").trim()
+                        if (link.isNotEmpty()) {
+                            parseSingleUri(link, defaultGroup, subscriptionId).fold(
+                                onSuccess = { profiles.add(it) },
+                                onFailure = { err -> failures.add(ParseFailure(link.take(64), err.message ?: "Invalid URI in JSON")) }
+                            )
+                        }
+                    }
+                    continue
+                }
+
                 val remarksBase = root.optString("remarks", "").ifBlank { "Imported JSON" }
                 val outbounds = root.optJSONArray("outbounds")
                 if (outbounds == null || outbounds.length() == 0) {
-                    failures.add(ParseFailure("JSON", "No 'outbounds' array found in Xray JSON"))
+                    failures.add(ParseFailure("JSON", "No 'outbounds' array found in JSON configuration"))
                     continue
                 }
                 for (i in 0 until outbounds.length()) {
                     val ob = outbounds.optJSONObject(i) ?: continue
-                    val protocolStr = ob.optString("protocol", "").lowercase()
-                    if (protocolStr in listOf("freedom", "blackhole", "dns", "direct", "block")) continue
+                    val protocolStr = ob.optString("protocol", ob.optString("type", "")).lowercase()
+                    if (protocolStr in listOf("freedom", "blackhole", "dns", "direct", "block", "selector", "urltest")) continue
                     val protocol = VpnProtocol.fromScheme(protocolStr) ?: continue
+
+                    // Handle sing-box style outbound ("server", "server_port", "uuid"/"password")
+                    if (!ob.has("settings") && ob.has("server")) {
+                        val serverHost = ob.optString("server", "").trim()
+                        val serverPort = ob.optInt("server_port", 443)
+                        val cred = ob.optString("uuid", ob.optString("password", "")).trim()
+                        val tlsObj = ob.optJSONObject("tls")
+                        val transportObj = ob.optJSONObject("transport")
+                        val realityObj = tlsObj?.optJSONObject("reality")
+                        val sec = when {
+                            realityObj?.optBoolean("enabled", false) == true -> SecurityType.REALITY
+                            tlsObj?.optBoolean("enabled", false) == true || protocol == VpnProtocol.HYSTERIA2 -> SecurityType.TLS
+                            else -> SecurityType.NONE
+                        }
+                        val net = TransportType.fromWire(transportObj?.optString("type", "tcp"))
+                        if (serverHost.isNotEmpty() && cred.isNotEmpty() && serverPort in 1..65535) {
+                            profiles.add(
+                                ServerProfile(
+                                    remarks = ob.optString("tag", "").ifBlank { remarksBase },
+                                    groupName = defaultGroup,
+                                    subscriptionId = subscriptionId,
+                                    protocol = protocol,
+                                    address = serverHost,
+                                    port = serverPort,
+                                    credential = cred,
+                                    encryption = ob.optString("method", ob.optString("security", "none")),
+                                    flow = ob.optString("flow", ""),
+                                    network = net,
+                                    path = transportObj?.optString("path", "") ?: "",
+                                    serviceName = transportObj?.optString("service_name", "") ?: "",
+                                    security = sec,
+                                    sni = tlsObj?.optString("server_name", "") ?: "",
+                                    realityPublicKey = realityObj?.optString("public_key", "") ?: "",
+                                    realityShortId = realityObj?.optString("short_id", "") ?: ""
+                                )
+                            )
+                        }
+                        continue
+                    }
+
                     val settings = ob.optJSONObject("settings") ?: continue
                     val stream = ob.optJSONObject("streamSettings")
 
@@ -616,11 +1002,11 @@ object ConfigParser {
                                 )
                             }
                         }
-                        VpnProtocol.TROJAN, VpnProtocol.SHADOWSOCKS -> {
+                        VpnProtocol.TROJAN, VpnProtocol.SHADOWSOCKS, VpnProtocol.HYSTERIA2 -> {
                             val server = settings.optJSONArray("servers")?.optJSONObject(0) ?: continue
                             val address = server.optString("address", "")
                             val port = server.optInt("port", 443)
-                            val password = server.optString("password", "")
+                            val password = server.optString("password", server.optString("auth", ""))
                             val method = server.optString("method", "aes-256-gcm")
                             if (address.isNotEmpty() && password.isNotEmpty()) {
                                 profiles.add(
@@ -634,7 +1020,7 @@ object ConfigParser {
                                         credential = password,
                                         encryption = method,
                                         network = network,
-                                        security = security,
+                                        security = if (protocol == VpnProtocol.HYSTERIA2 && security == SecurityType.NONE) SecurityType.TLS else security,
                                         sni = tlsSettings?.optString("serverName", "") ?: ""
                                     )
                                 )
@@ -647,7 +1033,7 @@ object ConfigParser {
         } catch (e: Exception) {
             failures.add(ParseFailure("JSON", "Invalid JSON syntax: ${e.message}"))
         }
-        return BatchParseResult(profiles, failures, 0)
+        return BatchParseResult(profiles, failures, 0, SubscriptionFormat.JSON)
     }
 
     /**

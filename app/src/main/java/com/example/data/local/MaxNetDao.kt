@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
 
@@ -55,6 +56,17 @@ interface MaxNetDao {
 
     @Query("DELETE FROM subscriptions WHERE id = :id")
     suspend fun deleteSubscriptionById(id: Long)
+
+    @Transaction
+    suspend fun replaceSubscriptionProfilesTransaction(
+        subscriptionId: Long,
+        newProfiles: List<ProfileEntity>,
+        updatedSubscription: SubscriptionEntity
+    ) {
+        deleteProfilesBySubscriptionId(subscriptionId)
+        insertProfiles(newProfiles)
+        updateSubscription(updatedSubscription)
+    }
 
     // Profile Groups
     @Query("SELECT * FROM profile_groups ORDER BY name ASC")
