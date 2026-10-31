@@ -1,0 +1,189 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MaxNet5GFreeVpnManifest",
+  "description": "Schema definition for MAXNET5G Free VPN signed manifest",
+  "type": "object",
+  "required": [
+    "schema",
+    "sequence",
+    "generatedAt",
+    "validUntil",
+    "keyId",
+    "pipeline",
+    "servers"
+  ],
+  "properties": {
+    "schema": {
+      "type": "integer",
+      "const": 1
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "generatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "validUntil": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "keyId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "pipeline": {
+      "type": "object",
+      "required": ["version", "xrayVersion"],
+      "properties": {
+        "version": {
+          "type": "string"
+        },
+        "xrayVersion": {
+          "type": "string"
+        }
+      }
+    },
+    "probe": {
+      "type": "object",
+      "properties": {
+        "urls": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^https://"
+          },
+          "maxItems": 5
+        }
+      }
+    },
+    "servers": {
+      "type": "array",
+      "maxItems": 300,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "protocol",
+          "host",
+          "port",
+          "credential",
+          "security",
+          "network",
+          "stats"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{16}$"
+          },
+          "protocol": {
+            "type": "string",
+            "enum": ["VLESS", "VMESS", "TROJAN"]
+          },
+          "host": {
+            "type": "string"
+          },
+          "port": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          },
+          "credential": {
+            "type": "string"
+          },
+          "flow": {
+            "type": "string"
+          },
+          "encryption": {
+            "type": "string"
+          },
+          "network": {
+            "type": "string"
+          },
+          "security": {
+            "type": "string",
+            "enum": ["tls", "reality"]
+          },
+          "sni": {
+            "type": "string"
+          },
+          "alpn": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "fingerprint": {
+            "type": "string"
+          },
+          "realityPublicKey": {
+            "type": "string"
+          },
+          "realityShortId": {
+            "type": "string"
+          },
+          "realitySpiderPath": {
+            "type": "string"
+          },
+          "hostHeader": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "grpcServiceName": {
+            "type": "string"
+          },
+          "grpcMode": {
+            "type": "string"
+          },
+          "origin": {
+            "type": "string"
+          },
+          "stats": {
+            "type": "object",
+            "required": [
+              "latency_ms",
+              "jitter_ms",
+              "success_ratio",
+              "throughput_kbps",
+              "age_h",
+              "score"
+            ],
+            "properties": {
+              "latency_ms": {
+                "type": "number",
+                "minimum": 0
+              },
+              "jitter_ms": {
+                "type": "number",
+                "minimum": 0
+              },
+              "success_ratio": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "throughput_kbps": {
+                "type": "number",
+                "minimum": 0
+              },
+              "age_h": {
+                "type": "number",
+                "minimum": 0
+              },
+              "score": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

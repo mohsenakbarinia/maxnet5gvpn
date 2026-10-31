@@ -1,0 +1,23 @@
+# MAXNET5G Free VPN Pipeline - Sources Configuration
+# Supported formats: uri_list, base64, clash_yaml, singbox_json
+
+- name: "freefq-pool"
+  url: "https://raw.githubusercontent.com/freefq/free/master/v2"
+  format: "base64"
+  enabled: true
+  max_bytes: 5242880
+  notes: "Aggregated public community test configs"
+
+- name: "ermaozi-subscribe-pool"
+  url: "https://raw.githubusercontent.com/ermaozi/get_subscribe/main/subscribe/v2ray.txt"
+  format: "base64"
+  enabled: true
+  max_bytes: 5242880
+  notes: "Daily updated public proxy subscription"
+
+- name: "pawdroid-free-servers"
+  url: "https://raw.githubusercontent.com/Pawdroid/Free-servers/main/sub"
+  format: "base64"
+  enabled: true
+  max_bytes: 5242880
+  notes: "Public free servers list"

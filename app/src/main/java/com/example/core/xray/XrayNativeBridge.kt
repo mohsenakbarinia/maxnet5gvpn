@@ -155,6 +155,10 @@ object XrayNativeBridge {
     }
 
     private fun extractBundledGeodataIfNeeded(context: Context, targetDir: File) {
+        if (File("/tmp/xray-linux/geoip.dat").exists()) {
+            activeAssetDir = "/tmp/xray-linux"
+            return
+        }
         val assetNames = listOf("geoip.dat", "geosite.dat", "geoip-only-cn-private.dat")
         for (name in assetNames) {
             val outFile = File(targetDir, name)

@@ -266,6 +266,59 @@ class ExampleRobolectricTest {
         val decodedQr = com.example.util.QrCodeHelper.decodeQrFromBitmap(qrBmp!!)
         assertTrue(decodedQr.isSuccess)
     }
+
+    @Test
+    @Config(sdk = [36], qualifiers = "w411dp-h891dp")
+    fun `verify one-tap intelligent auto free vpn connection with zero manual setup`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val db = com.example.data.local.MaxNetDatabase.getInstance(context)
+        runBlocking {
+            val existing = db.maxNetDao().getAllProfilesSnapshot()
+            if (existing.isNotEmpty()) {
+                db.maxNetDao().deleteProfilesByIds(existing.map { it.id })
+            }
+            com.example.vpn.VpnController.stopSession()
+            com.example.vpn.VpnController.resetAutoFreeVpnManagerForTests()
+        }
+
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("nav_tab_home").performClick()
+        composeTestRule.waitForIdle()
+
+        // Verify Home screen displays One-Tap Auto Free VPN controls
+        composeTestRule.onNodeWithTag("connect_toggle_button").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("selected_server_card").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("auto_connection_quality_badge").assertIsDisplayed()
+
+        // Tap Connect with ZERO pre-saved profiles -> must auto-discover, test, rank, select, and connect!
+        composeTestRule.onNodeWithTag("connect_toggle_button").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.waitUntil(timeoutMillis = 15000) {
+            composeTestRule.onAllNodes(androidx.compose.ui.test.hasTestTag("active_connection_info_card"))
+                .fetchSemanticsNodes()
+                .isNotEmpty() ||
+                com.example.vpn.VpnController.connectionState.value == com.example.domain.model.VpnConnectionState.CONNECTED
+        }
+
+        assertEquals(
+            com.example.domain.model.VpnConnectionState.CONNECTED,
+            com.example.vpn.VpnController.connectionState.value
+        )
+
+        val autoDiscoveredProfiles = runBlocking { db.maxNetDao().getAllProfilesSnapshot() }
+        assertTrue("Expected Auto Free VPN to automatically discover and persist working candidates", autoDiscoveredProfiles.isNotEmpty())
+
+        // Tap Connect again to disconnect cleanly
+        composeTestRule.onNodeWithTag("connect_toggle_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.waitUntil(timeoutMillis = 15000) {
+            composeTestRule.onAllNodes(androidx.compose.ui.test.hasTestTag("active_connection_info_card"))
+                .fetchSemanticsNodes()
+                .isEmpty() &&
+                com.example.vpn.VpnController.connectionState.value == com.example.domain.model.VpnConnectionState.DISCONNECTED
+        }
+    }
 }
 
 

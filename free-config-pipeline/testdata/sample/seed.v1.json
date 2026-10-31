@@ -1,0 +1,83 @@
+{
+  "schema": 1,
+  "sequence": 1,
+  "generatedAt": "2026-10-31T17:30:49.481249+00:00",
+  "validUntil": "2026-11-03T17:30:49.481249+00:00",
+  "keyId": "test-1",
+  "pipeline": {
+    "version": "1.0.0",
+    "xrayVersion": "v26.10.29"
+  },
+  "probe": {
+    "urls": [
+      "https://www.gstatic.com/generate_204"
+    ]
+  },
+  "servers": [
+    {
+      "id": "a1b2c3d4e5f67890",
+      "protocol": "VLESS",
+      "host": "vpn1.sample.net",
+      "port": 443,
+      "credential": "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d",
+      "flow": "xtls-rprx-vision",
+      "encryption": "none",
+      "network": "tcp",
+      "security": "reality",
+      "sni": "dl.google.com",
+      "alpn": [
+        "h2",
+        "http/1.1"
+      ],
+      "fingerprint": "chrome",
+      "realityPublicKey": "1111111111111111111111111111111111111111111",
+      "realityShortId": "12345678",
+      "realitySpiderPath": "/",
+      "hostHeader": "",
+      "path": "",
+      "grpcServiceName": "",
+      "grpcMode": "gun",
+      "origin": "SAMPLE_FIXTURE",
+      "stats": {
+        "latency_ms": 120.0,
+        "jitter_ms": 15.0,
+        "success_ratio": 1.0,
+        "throughput_kbps": 2048.0,
+        "age_h": 0.0,
+        "score": 95.5
+      }
+    },
+    {
+      "id": "b2c3d4e5f6a78901",
+      "protocol": "TROJAN",
+      "host": "vpn2.sample.net",
+      "port": 443,
+      "credential": "SampleTrojanPassword123!",
+      "flow": "",
+      "encryption": "none",
+      "network": "ws",
+      "security": "tls",
+      "sni": "vpn2.sample.net",
+      "alpn": [
+        "http/1.1"
+      ],
+      "fingerprint": "firefox",
+      "realityPublicKey": "",
+      "realityShortId": "",
+      "realitySpiderPath": "",
+      "hostHeader": "vpn2.sample.net",
+      "path": "/ws",
+      "grpcServiceName": "",
+      "grpcMode": "gun",
+      "origin": "SAMPLE_FIXTURE",
+      "stats": {
+        "latency_ms": 210.0,
+        "jitter_ms": 30.0,
+        "success_ratio": 1.0,
+        "throughput_kbps": 1024.0,
+        "age_h": 0.0,
+        "score": 88.0
+      }
+    }
+  ]
+}

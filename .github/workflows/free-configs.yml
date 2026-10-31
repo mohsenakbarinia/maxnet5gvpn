@@ -1,0 +1,217 @@
+name: MAXNET5G Free Config Pipeline
+
+on:
+  schedule:
+    # Run hourly at off-peak minute 17
+    - cron: "17 * * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Run tests without signing or publishing"
+        type: boolean
+        default: false
+      publish:
+        description: "Publish signed manifest to Pages and data branch"
+        type: boolean
+        default: true
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+    paths:
+      - "free-config-pipeline/**"
+      - ".github/workflows/free-configs.yml"
+
+concurrency:
+  group: free-configs-pipeline
+  cancel-in-progress: false
+
+jobs:
+  collect-and-test:
+    name: Collect & Test Candidates (Read-Only)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r free-config-pipeline/requirements.txt
+
+      - name: Run Pipeline Unit & Fuzz Tests
+        run: |
+          python3 free-config-pipeline/run_tests.py
+
+      - name: Download & Verify Xray Core v26.10.29
+        run: |
+          mkdir -p bin
+          XRAY_VER="v26.10.29"
+          XRAY_URL="https://github.com/XTLS/Xray-core/releases/download/${XRAY_VER}/Xray-linux-64.zip"
+          curl -sSL "${XRAY_URL}" -o bin/xray.zip
+          
+          # Verify checksum
+          EXPECTED_SHA256="72ec0b4e05b3eecfe0e159679234bfa1e43b1c676d1a1b55ea9470921473faec"
+          ACTUAL_SHA256=$(sha256sum bin/xray.zip | awk '{print $1}')
+          if [ "${ACTUAL_SHA256}" != "${EXPECTED_SHA256}" ]; then
+            echo "::error::Xray checksum mismatch! Expected: ${EXPECTED_SHA256}, Got: ${ACTUAL_SHA256}"
+            exit 1
+          fi
+
+          unzip -q bin/xray.zip -d bin/
+          chmod +x bin/xray
+          echo "Xray-core $(bin/xray version | head -n1) verified."
+          echo "XRAY_BINARY_PATH=$(pwd)/bin/xray" >> $GITHUB_ENV
+
+      - name: Run Collection Pipeline
+        run: |
+          PYTHONPATH=free-config-pipeline/src python3 -m free_config_pipeline.collect \
+            --sources free-config-pipeline/sources.yml \
+            --out build/candidates.json \
+            --report build/report.json
+
+      - name: Run Stage A & Stage B Runner Tests
+        run: |
+          PYTHONPATH=free-config-pipeline/src python3 -m free_config_pipeline.run \
+            --candidates build/candidates.json \
+            --state state/history.json \
+            --out-dir build/dist \
+            --xray-binary bin/xray \
+            --dry-run
+
+      - name: Upload Verified Dist Artifact
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
+        with:
+          name: tested-configs-artifact
+          path: |
+            build/dist/
+            build/candidates.json
+            build/report.json
+          retention-days: 2
+
+  sign-and-publish:
+    name: Sign Manifest & Publish Mirrors
+    needs: collect-and-test
+    if: github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.publish == true)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
+        with:
+          python-version: "3.11"
+
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r free-config-pipeline/requirements.txt
+
+      - name: Download Artifacts from Tester Job
+        uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806 # v4.1.9
+        with:
+          name: tested-configs-artifact
+          path: build/
+
+      - name: Checkout or Create Orphan Data Branch (free-configs-data)
+        run: |
+          mkdir -p state
+          if git fetch origin free-configs-data:refs/remotes/origin/free-configs-data 2>/dev/null; then
+            git show origin/free-configs-data:state/history.json > state/history.json 2>/dev/null || true
+            git show origin/free-configs-data:manifest.v1.json > build/dist/manifest.v1.prev.json 2>/dev/null || true
+          fi
+
+      - name: Sign Manifest with Secret Key & Verify Schema
+        env:
+          FREE_CONFIG_SIGNING_KEY: ${{ secrets.FREE_CONFIG_SIGNING_KEY }}
+          FREE_CONFIG_KEY_ID: "prod-1"
+        run: |
+          if [ -z "${FREE_CONFIG_SIGNING_KEY}" ]; then
+            echo "::warning::FREE_CONFIG_SIGNING_KEY secret is not configured. Running dry-run signing..."
+            DRY_RUN_FLAG="--dry-run"
+          else
+            DRY_RUN_FLAG="--publish"
+          fi
+
+          PYTHONPATH=free-config-pipeline/src python3 -m free_config_pipeline.run \
+            --candidates build/candidates.json \
+            --state state/history.json \
+            --out-dir build/dist \
+            ${DRY_RUN_FLAG}
+
+      - name: Prepare GitHub Pages Payload
+        run: |
+          mkdir -p pages_deploy
+          cp build/dist/manifest.v1.json pages_deploy/
+          cp build/dist/manifest.v1.json.sig pages_deploy/
+          cp build/dist/seed.v1.json pages_deploy/
+          cp build/dist/seed.v1.json.sig pages_deploy/
+          
+          # Static integrity canary (matches canary SHA256)
+          echo "MAXNET5G-FREE-VPN-CANARY-OK" > pages_deploy/canary.txt
+
+      - name: Upload Pages Artifact
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
+        with:
+          path: pages_deploy/
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5
+
+      - name: Publish to Orphan Data Branch (free-configs-data)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Switch to orphan branch
+          git checkout --orphan free-configs-data 2>/dev/null || git checkout free-configs-data
+          git rm -rf . >/dev/null 2>&1 || true
+
+          # Populate branch with latest manifests and state
+          mkdir -p state
+          cp build/dist/manifest.v1.json ./
+          cp build/dist/manifest.v1.json.sig ./
+          cp build/dist/seed.v1.json ./
+          cp build/dist/seed.v1.json.sig ./
+          cp build/candidates.json ./
+          cp build/report.json ./
+          cp state/history.json state/ 2>/dev/null || true
+          echo "MAXNET5G-FREE-VPN-CANARY-OK" > canary.txt
+
+          git add manifest.v1.json manifest.v1.json.sig seed.v1.json seed.v1.json.sig candidates.json report.json state/ canary.txt
+          git commit -m "Auto-published free configs manifest [$(date -u +'%Y-%m-%dT%H:%M:%SZ')]"
+          git push -f origin free-configs-data
+
+      - name: Purge jsDelivr CDN Cache (Branch Ref)
+        run: |
+          REPO_NAME="${{ github.repository }}"
+          echo "Purging jsDelivr cache for ${REPO_NAME}@free-configs-data..."
+          curl -sS "https://purge.jsdelivr.net/gh/${REPO_NAME}@free-configs-data/manifest.v1.json" || true
+          curl -sS "https://purge.jsdelivr.net/gh/${REPO_NAME}@free-configs-data/seed.v1.json" || true
+
+      - name: Scheduled Workflow Keep-Alive Heartbeat
+        run: |
+          # Prevents GitHub from disabling scheduled actions after 60 days of repo inactivity
+          echo "Updating keep-alive timestamp: $(date -u)"
+          gh api -X PUT "repos/${{ github.repository }}/actions/workflows/free-configs.yml/enable" 2>/dev/null || true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

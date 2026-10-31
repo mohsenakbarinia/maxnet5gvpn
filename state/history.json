@@ -1,0 +1,56 @@
+{
+  "cb74b69a45ef734d": {
+    "first_seen": "2026-10-31T17:32:06.770909+00:00",
+    "last_seen": "2026-10-31T17:32:19.232446+00:00",
+    "last_ok": "2026-10-31T17:32:19.232446+00:00",
+    "consecutive_failures": 0,
+    "rolling_success_bits": 3,
+    "runs_recorded": 2,
+    "ewma_latency_ms": 180.0
+  },
+  "843532b6374ce527": {
+    "first_seen": "2026-10-31T17:32:06.770909+00:00",
+    "last_seen": "2026-10-31T17:32:19.232446+00:00",
+    "last_ok": "2026-10-31T17:32:19.232446+00:00",
+    "consecutive_failures": 0,
+    "rolling_success_bits": 3,
+    "runs_recorded": 2,
+    "ewma_latency_ms": 180.0
+  },
+  "f9632d83613538aa": {
+    "first_seen": "2026-10-31T17:32:06.770909+00:00",
+    "last_seen": "2026-10-31T17:32:19.232446+00:00",
+    "last_ok": "2026-10-31T17:32:19.232446+00:00",
+    "consecutive_failures": 0,
+    "rolling_success_bits": 3,
+    "runs_recorded": 2,
+    "ewma_latency_ms": 180.0
+  },
+  "5d4349b5250c7358": {
+    "first_seen": "2026-10-31T17:32:06.770909+00:00",
+    "last_seen": "2026-10-31T17:32:19.232446+00:00",
+    "last_ok": "2026-10-31T17:32:19.232446+00:00",
+    "consecutive_failures": 0,
+    "rolling_success_bits": 3,
+    "runs_recorded": 2,
+    "ewma_latency_ms": 180.0
+  },
+  "9b29906f588cb505": {
+    "first_seen": "2026-10-31T17:32:06.770909+00:00",
+    "last_seen": "2026-10-31T17:32:19.232446+00:00",
+    "last_ok": "2026-10-31T17:32:19.232446+00:00",
+    "consecutive_failures": 0,
+    "rolling_success_bits": 3,
+    "runs_recorded": 2,
+    "ewma_latency_ms": 180.0
+  },
+  "85417a96140c36d3": {
+    "first_seen": "2026-10-31T17:32:06.770909+00:00",
+    "last_seen": "2026-10-31T17:32:19.232446+00:00",
+    "last_ok": "2026-10-31T17:32:19.232446+00:00",
+    "consecutive_failures": 0,
+    "rolling_success_bits": 3,
+    "runs_recorded": 2,
+    "ewma_latency_ms": 180.0
+  }
+}

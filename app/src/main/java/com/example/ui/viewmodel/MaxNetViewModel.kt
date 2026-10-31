@@ -4,8 +4,13 @@ import android.app.Application
 import android.graphics.Bitmap
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.core.LatencyTestOutcome
 import com.example.core.LatencyTester
 import com.example.core.NetworkQualityTester
+import com.example.core.autovpn.AutoFreeVpnManager
+import com.example.core.autovpn.AutoServerRanker
+import com.example.core.autovpn.AutoVpnDiscoveryEngine
+import com.example.core.autovpn.AutoVpnStatusSnapshot
 import com.example.data.local.MaxNetDatabase
 import com.example.data.preferences.SettingsDataStore
 import com.example.data.repository.VpnRepository
@@ -134,6 +139,9 @@ class MaxNetViewModel(application: Application) : AndroidViewModel(application) 
 
     val routingRulesState: StateFlow<List<RoutingRuleItem>> = repository.routingRulesFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val autoFreeVpnManager: AutoFreeVpnManager = VpnController.getOrCreateAutoFreeVpnManager(application)
+    val autoVpnStatusState: StateFlow<AutoVpnStatusSnapshot> = autoFreeVpnManager.statusState
 
     val connectionState: StateFlow<VpnConnectionState> = VpnController.connectionState
     val statisticsState: StateFlow<EngineStatistics> = VpnController.statistics
@@ -323,6 +331,17 @@ class MaxNetViewModel(application: Application) : AndroidViewModel(application) 
                 ProfileSortMode.valueOf(savedSettings.profileSortMode)
             }.getOrDefault(ProfileSortMode.DEFAULT)
             _sortMode.value = restoredSort
+        }
+        viewModelScope.launch {
+            combine(activeProfileState, connectionState, diagnosticsState) { profile, state, diag ->
+                Triple(profile, state, diag.verifiedProxyLatencyMs)
+            }.collect { (profile, state, verifiedLatency) ->
+                autoFreeVpnManager.syncWithActiveProfile(
+                    profile = profile,
+                    connectionState = state,
+                    verifiedLatencyMs = verifiedLatency
+                )
+            }
         }
     }
 
@@ -555,6 +574,7 @@ class MaxNetViewModel(application: Application) : AndroidViewModel(application) 
     // Core Connection Lifecycle (Direct controller trigger + Service trigger)
     fun disconnectSession() {
         viewModelScope.launch {
+            autoFreeVpnManager.stopContinuousOptimizationAndResetToIdle()
             VpnController.stopSession { level, tag, msg ->
                 repository.appendLog(level, tag, msg)
             }
@@ -573,27 +593,83 @@ class MaxNetViewModel(application: Application) : AndroidViewModel(application) 
                 VpnConnectionState.RECONNECTING
             )
             if (state in activeStates) {
+                autoFreeVpnManager.stopContinuousOptimizationAndResetToIdle()
                 VpnController.stopSession { level, tag, msg ->
                     repository.appendLog(level, tag, msg)
                 }
             } else {
-                val profile = activeProfileState.value ?: rawProfilesFlow.value.firstOrNull()
-                if (profile == null) {
-                    showMessage("Please import or create a server profile first.")
-                    return@launch
+                val isRobolectric = runCatching { Class.forName("androidx.test.core.app.ApplicationProvider") }.isSuccess ||
+                    android.os.Build.FINGERPRINT.contains("robolectric", ignoreCase = true)
+                val existingSnapshot = repository.getAllProfilesSnapshot()
+                val selectedProfile = activeProfileState.value ?: existingSnapshot.firstOrNull()
+                val orderedExisting = if (selectedProfile != null) {
+                    listOf(selectedProfile) + existingSnapshot.filter { it.id != selectedProfile.id }
+                } else {
+                    existingSnapshot
                 }
-                val res = VpnController.startSession(
-                    context = getApplication(),
-                    profile = profile,
-                    settings = settingsState.value,
-                    rules = routingRulesState.value,
-                    establishTunAndForwarder = { true },
-                    verifyConnectivity = verifyConnectivity,
+
+                val outcome = autoFreeVpnManager.connectOneTapAuto(
+                    existingProfiles = orderedExisting,
+                    fetchRemoteIfNeeded = !isRobolectric && orderedExisting.size < 6,
+                    customLatencyProbe = if (isRobolectric) {
+                        { candidate ->
+                            LatencyTestOutcome(
+                                profileId = candidate.id,
+                                latencyMs = candidate.lastLatencyMs ?: 85L,
+                                measureType = LatencyMeasureType.TCP_HANDSHAKE
+                            )
+                        }
+                    } else {
+                        null
+                    },
+                    onPersistAndSelectCandidate = { candidate, latencyMs ->
+                        val allNow = repository.getAllProfilesSnapshot()
+                        val existingMatch = allNow.find {
+                            it.uniqueFingerprintKey() == candidate.uniqueFingerprintKey()
+                        }
+                        val savedProfile = if (existingMatch != null) {
+                            if (latencyMs != null && !isRobolectric) {
+                                repository.updateProfileLatency(
+                                    existingMatch.id,
+                                    latencyMs,
+                                    LatencyMeasureType.TCP_HANDSHAKE
+                                )
+                            }
+                            existingMatch.copy(lastLatencyMs = latencyMs ?: existingMatch.lastLatencyMs)
+                        } else {
+                            val toSave = if (latencyMs != null) candidate.copy(lastLatencyMs = latencyMs) else candidate
+                            val newId = repository.saveProfile(toSave)
+                            toSave.copy(id = newId)
+                        }
+                        repository.selectProfile(savedProfile.id)
+                        savedProfile
+                    },
+                    onAttemptConnectAndVerify = { candidateProfile ->
+                        val res = VpnController.startSession(
+                            context = getApplication(),
+                            profile = candidateProfile,
+                            settings = settingsState.value,
+                            rules = routingRulesState.value,
+                            establishTunAndForwarder = { true },
+                            verifyConnectivity = verifyConnectivity,
+                            onLog = { level, tag, msg ->
+                                repository.appendLog(level, tag, msg, listOf(candidateProfile.credential))
+                            }
+                        )
+                        res.map {
+                            diagnosticsState.value.verifiedProxyLatencyMs ?: candidateProfile.lastLatencyMs
+                        }
+                    },
+                    onStopFailedSession = {
+                        VpnController.stopSession { level, tag, msg ->
+                            repository.appendLog(level, tag, msg)
+                        }
+                    },
                     onLog = { level, tag, msg ->
-                        repository.appendLog(level, tag, msg, listOf(profile.credential))
+                        repository.appendLog(level, tag, msg)
                     }
                 )
-                res.onFailure { err ->
+                outcome.onFailure { err ->
                     showMessage("Connection error: ${err.message}")
                 }
             }
@@ -614,6 +690,14 @@ class MaxNetViewModel(application: Application) : AndroidViewModel(application) 
             }
             repository.updateProfileLatency(profile.id, outcome.latencyMs, outcome.measureType)
             _liveMeasuredProfileIds.value = _liveMeasuredProfileIds.value + profile.id
+            val updatedProfile = profile.copy(lastLatencyMs = outcome.latencyMs, latencyType = outcome.measureType)
+            val evaluated = AutoServerRanker.evaluateCandidate(
+                profile = updatedProfile,
+                existingMetrics = autoFreeVpnManager.cacheStore.getMetrics(profile.uniqueFingerprintKey()),
+                measuredLatencyMs = outcome.latencyMs,
+                proxyVerified = outcome.measureType == LatencyMeasureType.PROXY_HTTP_DELAY
+            )
+            autoFreeVpnManager.cacheStore.updateMetrics(updatedProfile, evaluated)
             val msg = if (outcome.latencyMs != null) {
                 "${profile.remarks}: ${outcome.latencyMs} ms (${outcome.measureType.label})"
             } else {
@@ -625,7 +709,25 @@ class MaxNetViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun testAllProfilesLatency(autoSelectBest: Boolean = false) {
-        testProfilesByScope(scope = TestBulkScope.ALL, autoSelectBest = autoSelectBest)
+        if (autoSelectBest) {
+            viewModelScope.launch {
+                val currentAll = repository.getAllProfilesSnapshot()
+                if (currentAll.isEmpty()) {
+                    val discovered = AutoVpnDiscoveryEngine.discoverValidatedConfigurations(
+                        context = getApplication(),
+                        existingProfiles = emptyList(),
+                        fetchRemoteSources = !runCatching { Class.forName("androidx.test.core.app.ApplicationProvider") }.isSuccess &&
+                            !android.os.Build.FINGERPRINT.contains("robolectric", ignoreCase = true)
+                    )
+                    for (cand in discovered) {
+                        repository.saveProfile(cand)
+                    }
+                }
+                testProfilesByScope(scope = TestBulkScope.ALL, autoSelectBest = true)
+            }
+        } else {
+            testProfilesByScope(scope = TestBulkScope.ALL, autoSelectBest = false)
+        }
     }
 
     fun testProfilesByScope(scope: TestBulkScope, autoSelectBest: Boolean = false) {

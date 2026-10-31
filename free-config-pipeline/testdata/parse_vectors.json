@@ -1,0 +1,78 @@
+[
+  {
+    "name": "valid_vless_reality_tcp",
+    "raw": "vless://a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d@example.com:443?encryption=none&flow=xtls-rprx-vision&security=reality&sni=test.example.com&fp=chrome&pbk=1111111111111111111111111111111111111111111&sid=0123456789abcdef&type=tcp#TestRemark",
+    "should_parse": true,
+    "expected_protocol": "VLESS",
+    "expected_host": "example.com",
+    "expected_port": 443,
+    "expected_security": "reality",
+    "expected_network": "tcp"
+  },
+  {
+    "name": "valid_vless_ws_tls",
+    "raw": "vless://b2c3d4e5-f6a7-8b9c-0d1e-2f3a4b5c6d7e@node2.cloud.net:8443?encryption=none&security=tls&sni=node2.cloud.net&type=ws&path=%2Fchat%2Fstream&host=node2.cloud.net&fp=firefox&alpn=h2,http/1.1#WS_Node",
+    "should_parse": true,
+    "expected_protocol": "VLESS",
+    "expected_host": "node2.cloud.net",
+    "expected_port": 8443,
+    "expected_security": "tls",
+    "expected_network": "ws"
+  },
+  {
+    "name": "valid_vmess_json_b64",
+    "raw": "vmess://eyJhZGQiOiAidm1lc3Mubm9kZS5pbyIsICJhaWQiOiAwLCAiYWxwbiI6ICJoMiIsICJmcCI6ICJjaHJvbWUiLCAiaG9zdCI6ICJ2bWVzcy5ub2RlLmlvIiwgImlkIjogImMzZDRlNWY2LWE3YjgtOWMwZC0xZTJmLTNhNGI1YzZkN2U4ZiIsICJuZXQiOiAid3MiLCAicGF0aCI6ICIvd3NwYXRoIiwgInBvcnQiOiA0NDMsICJwcyI6ICJWTV9UZXN0IiwgInNjeSI6ICJhdXRvIiwgInNuaSI6ICJ2bWVzcy5ub2RlLmlvIiwgInRscyI6ICJ0bHMiLCAidHlwZSI6ICJub25lIn0=",
+    "should_parse": true,
+    "expected_protocol": "VMESS",
+    "expected_host": "vmess.node.io",
+    "expected_port": 443,
+    "expected_security": "tls",
+    "expected_network": "ws"
+  },
+  {
+    "name": "valid_trojan_grpc_tls",
+    "raw": "trojan://SecretP@ssw0rd!@trojan.relay.org:443?security=tls&sni=trojan.relay.org&type=grpc&serviceName=TrojanService&fp=edge#TrojanRelay",
+    "should_parse": true,
+    "expected_protocol": "TROJAN",
+    "expected_host": "trojan.relay.org",
+    "expected_port": 443,
+    "expected_security": "tls",
+    "expected_network": "grpc"
+  },
+  {
+    "name": "unsupported_shadowsocks",
+    "raw": "ss://YWVzLTI1Ni1nY206cGFzc3dvcmQ=@ss.example.com:8388#Shadowsocks",
+    "should_parse": false,
+    "expected_rejection": "SCHEME_UNSUPPORTED"
+  },
+  {
+    "name": "unsupported_hysteria2",
+    "raw": "hy2://secret@hy2.server.net:443?insecure=0#Hysteria2",
+    "should_parse": false,
+    "expected_rejection": "SCHEME_UNSUPPORTED"
+  },
+  {
+    "name": "malformed_vless_missing_at",
+    "raw": "vless://example.com:443?encryption=none",
+    "should_parse": false,
+    "expected_rejection": "SCHEME_MALFORMED"
+  },
+  {
+    "name": "malformed_vless_bad_port",
+    "raw": "vless://a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d@example.com:invalid_port?encryption=none",
+    "should_parse": false,
+    "expected_rejection": "PORT_RANGE"
+  },
+  {
+    "name": "vmess_alter_id_nonzero",
+    "raw": "vmess://eyJhZGQiOiAic2VydmVyLmlvIiwgImFpZCI6IDY0LCAiaWQiOiAiYTFiMmMzZDQtZTVmNi03YThiLTljMGQtMWUyZjNhNGI1YzZkIiwgInBvcnQiOiA0NDMsICJzY3kiOiAiYXV0byJ9",
+    "should_parse": false,
+    "expected_rejection": "VMESS_ALTER_ID_NONZERO"
+  },
+  {
+    "name": "vmess_security_none",
+    "raw": "vmess://eyJhZGQiOiAic2VydmVyLmlvIiwgImFpZCI6IDAsICJpZCI6ICJhMWIyYzNkNC1lNWY2LTdhOGItOWMwZC0xZTJmM2E0YjVjNmQiLCAicG9ydCI6IDQ0MywgInNjeSI6ICJub25lIn0=",
+    "should_parse": false,
+    "expected_rejection": "VMESS_SECURITY_INVALID"
+  }
+]

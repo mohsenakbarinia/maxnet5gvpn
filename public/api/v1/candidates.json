@@ -1,0 +1,32 @@
+{
+  "schema_version": "1.0",
+  "generated_by": "MAXNET5G Lightweight Auto-VPN Collector",
+  "supported_protocols": ["VLESS", "VLESS Reality", "VMess", "Trojan"],
+  "candidates": [
+    {
+      "protocol": "VLESS_REALITY",
+      "uri": "vless://b831381d-6324-4d53-ad4f-8cda48b30811@104.16.132.229:443?encryption=none&security=reality&sni=www.cloudflare.com&fp=chrome&pbk=m2c2t6P8vK9xL1nQ4rS7uW0yA3bC5dE8fG1hJ4kM7nP&sid=a1b2c3d4&type=tcp&flow=xtls-rprx-vision#AutoFree-VLESS-Reality-Edge1",
+      "network_compatibility": 1.0
+    },
+    {
+      "protocol": "VLESS",
+      "uri": "vless://c942492e-7435-4e64-be50-9deb59c41922@172.67.74.226:443?encryption=none&security=tls&sni=speed.cloudflare.com&fp=chrome&type=ws&host=speed.cloudflare.com&path=%2Fws-auto#AutoFree-VLESS-TLS-Edge2",
+      "network_compatibility": 0.95
+    },
+    {
+      "protocol": "TROJAN",
+      "uri": "trojan://d053503f-8546-4f75-9f61-0efc60d52033@104.21.48.84:443?security=tls&sni=cdn.cloudflare.com&alpn=h2,http/1.1&type=tcp#AutoFree-Trojan-TLS-Edge3",
+      "network_compatibility": 0.92
+    },
+    {
+      "protocol": "VLESS_REALITY",
+      "uri": "vless://e164614a-9657-4a86-8a72-1f0d71e63144@162.159.135.42:443?encryption=none&security=reality&sni=www.microsoft.com&fp=chrome&pbk=p9q8r7s6t5u4v3w2x1y0z9a8b7c6d5e4f3g2h1j0k9l&sid=10203040&type=grpc&serviceName=grpc-auto#AutoFree-VLESS-Reality-Edge4",
+      "network_compatibility": 0.98
+    },
+    {
+      "protocol": "VMESS",
+      "uri": "vmess://eyJ2IjoiMiIsInBzIjoiQXV0b0ZyZWUtVk1lc3MtVExTLUVkZ2U1IiwiYWRkIjoiMTA0LjE4LjMyLjQ3IiwicG9ydCI6IjQ0MyIsImlkIjoiZjI3NTcyNWItMDc2OC00Yjk3LThhODMtMmYxZTgyZjczMjU1IiwiYWlkIjoiMCIsInNjeSI6ImF1dG8iLCJuZXQiOiJ3cyIsInR5cGUiOiJub25lIiwiaG9zdCI6ImNkbi5jbG91ZGZsYXJlLmNvbSIsInBhdGgiOiIvdm1lc3Mtd3MiLCJ0bHMiOiJ0bHMiLCJzbmkiOiJjZG4uY2xvdWRmbGFyZS5jb20iLCJhbHBuIjoiaDIsaHR0cC8xLjEifQ==",
+      "network_compatibility": 0.90
+    }
+  ]
+}

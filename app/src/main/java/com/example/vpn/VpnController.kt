@@ -2,6 +2,8 @@ package com.example.vpn
 
 import android.content.Context
 import com.example.core.CoreEngine
+import com.example.core.autovpn.AutoFreeVpnManager
+import com.example.core.autovpn.AutoVpnCacheStore
 import com.example.core.singbox.SingBoxCoreAdapter
 import com.example.core.xray.XrayCoreAdapter
 import com.example.core.xray.XrayNativeBridge
@@ -28,8 +30,8 @@ import kotlinx.coroutines.launch
 /**
  * Coordinates the Dual-Engine adapters (Xray-core v26.10.29 & sing-box), TUN-to-SOCKS5
  * native packet forwarding (`libhev-socks5-tunnel.so`), 9-stage connection state machine,
- * end-to-end HTTP 204 proxy verification, 60-second real traffic history, and
- * exponential-backoff reconnection.
+ * end-to-end HTTP 204 proxy verification, 60-second real traffic history,
+ * exponential-backoff reconnection, and the Intelligent Auto Free VPN Manager.
  */
 object VpnController {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -38,6 +40,28 @@ object VpnController {
     private val singBoxEngine: CoreEngine = SingBoxCoreAdapter()
 
     private var currentEngine: CoreEngine = xrayEngine
+
+    @Volatile
+    private var _autoFreeVpnManager: AutoFreeVpnManager? = null
+
+    fun getOrCreateAutoFreeVpnManager(context: Context? = null): AutoFreeVpnManager {
+        val existing = _autoFreeVpnManager
+        if (existing != null) return existing
+        synchronized(this) {
+            val secondCheck = _autoFreeVpnManager
+            if (secondCheck != null) return secondCheck
+            val created = AutoFreeVpnManager(
+                context = context?.applicationContext,
+                cacheStore = AutoVpnCacheStore(context?.applicationContext)
+            )
+            _autoFreeVpnManager = created
+            return created
+        }
+    }
+
+    fun resetAutoFreeVpnManagerForTests() {
+        _autoFreeVpnManager?.resetState()
+    }
 
     private val _connectionState = MutableStateFlow(VpnConnectionState.DISCONNECTED)
     val connectionState: StateFlow<VpnConnectionState> = _connectionState.asStateFlow()

@@ -1,0 +1,14 @@
+# Example sources configuration for MAXNET5G Free VPN Pipeline
+- name: "example-uri-feed"
+  url: "https://example.com/sub/uris.txt"
+  format: "uri_list"
+  enabled: true
+  max_bytes: 5242880
+  notes: "Direct line-delimited share links"
+
+- name: "example-base64-feed"
+  url: "https://example.com/sub/base64.txt"
+  format: "base64"
+  enabled: true
+  max_bytes: 5242880
+  notes: "Base64 encoded subscription endpoint"

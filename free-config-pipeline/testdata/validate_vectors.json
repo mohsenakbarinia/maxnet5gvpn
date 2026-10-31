@@ -1,0 +1,271 @@
+[
+  {
+    "name": "valid_vless_reality",
+    "server": {
+      "id": "canon01",
+      "protocol": "VLESS",
+      "host": "vpn.example.com",
+      "port": 443,
+      "credential": "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d",
+      "flow": "xtls-rprx-vision",
+      "encryption": "none",
+      "network": "tcp",
+      "security": "reality",
+      "sni": "dl.google.com",
+      "alpn": ["h2", "http/1.1"],
+      "fingerprint": "chrome",
+      "realityPublicKey": "1111111111111111111111111111111111111111111",
+      "realityShortId": "12345678",
+      "realitySpiderPath": "/download",
+      "hostHeader": "",
+      "path": "",
+      "grpcServiceName": "",
+      "grpcMode": "gun"
+    },
+    "is_valid": true,
+    "expected_rejection": null
+  },
+  {
+    "name": "valid_trojan_tls",
+    "server": {
+      "id": "canon02",
+      "protocol": "TROJAN",
+      "host": "trojan.fastnode.org",
+      "port": 443,
+      "credential": "SuperStrongPassword123",
+      "flow": "",
+      "encryption": "none",
+      "network": "ws",
+      "security": "tls",
+      "sni": "trojan.fastnode.org",
+      "alpn": ["http/1.1"],
+      "fingerprint": "firefox",
+      "realityPublicKey": "",
+      "realityShortId": "",
+      "realitySpiderPath": "",
+      "hostHeader": "trojan.fastnode.org",
+      "path": "/ws-trojan",
+      "grpcServiceName": "",
+      "grpcMode": "gun"
+    },
+    "is_valid": true,
+    "expected_rejection": null
+  },
+  {
+    "name": "reject_host_loopback_ipv4",
+    "server": {
+      "id": "canon03",
+      "protocol": "VLESS",
+      "host": "127.0.0.1",
+      "port": 443,
+      "credential": "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d",
+      "security": "tls",
+      "network": "tcp"
+    },
+    "is_valid": false,
+    "expected_rejection": "HOST_LOOPBACK"
+  },
+  {
+    "name": "reject_host_private_ipv4_192",
+    "server": {
+      "id": "canon04",
+      "protocol": "VLESS",
+      "host": "192.168.1.50",
+      "port": 443,
+      "credential": "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d",
+      "security": "tls",
+      "network": "tcp"
+    },
+    "is_valid": false,
+    "expected_rejection": "HOST_PRIVATE"
+  },
+  {
+    "name": "reject_host_private_ipv4_10",
+    "server": {
+      "id": "canon05",
+      "protocol": "VLESS",
+      "host": "10.20.30.40",
+      "port": 443,
+      "credential": "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d",
+      "security": "tls",
+      "network": "tcp"
+    },
+    "is_valid": false,
+    "expected_rejection": "HOST_PRIVATE"
+  },
+  {
+    "name": "reject_host_cgnat",
+    "server": {
+      "id": "canon06",
+      "protocol": "VLESS",
+      "host": "100.64.1.1",
+      "port": 443,
+      "credential": "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d",
+      "security": "tls",
+      "network": "tcp"
+    },
+    "is_valid": false,
+    "expected_rejection": "HOST_CGNAT"
+  },
+  {
+    "name": "reject_host_link_local",
+    "server": {
+      "id": "canon07",
+      "protocol": "VLESS",
+      "host": "169.254.10.20",
+      "port": 443,
+      "credential": "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d",
+      "security": "tls",
+      "network": "tcp"
+    },
+    "is_valid": false,
+    "expected_rejection": "HOST_LINK_LOCAL"
+  },
+  {
+    "name": "reject_host_multicast",
+    "server": {
+      "id": "canon08",
+      "protocol": "VLESS",
+      "host": "224.0.0.251",
+      "port": 443,
+      "credential": "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d",
+      "security": "tls",
+      "network": "tcp"
+    },
+    "is_valid": false,
+    "expected_rejection": "HOST_MULTICAST"
+  },
+  {
+    "name": "reject_port_zero",
+    "server": {
+      "id": "canon09",
+      "protocol": "VLESS",
+      "host": "vpn.example.com",
+      "port": 0,
+      "credential": "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d",
+      "security": "tls",
+      "network": "tcp"
+    },
+    "is_valid": false,
+    "expected_rejection": "PORT_RANGE"
+  },
+  {
+    "name": "reject_port_too_large",
+    "server": {
+      "id": "canon10",
+      "protocol": "VLESS",
+      "host": "vpn.example.com",
+      "port": 70000,
+      "credential": "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d",
+      "security": "tls",
+      "network": "tcp"
+    },
+    "is_valid": false,
+    "expected_rejection": "PORT_RANGE"
+  },
+  {
+    "name": "reject_uuid_invalid",
+    "server": {
+      "id": "canon11",
+      "protocol": "VLESS",
+      "host": "vpn.example.com",
+      "port": 443,
+      "credential": "not-a-valid-uuid-string",
+      "security": "tls",
+      "network": "tcp"
+    },
+    "is_valid": false,
+    "expected_rejection": "UUID_INVALID"
+  },
+  {
+    "name": "reject_security_none",
+    "server": {
+      "id": "canon12",
+      "protocol": "VLESS",
+      "host": "vpn.example.com",
+      "port": 443,
+      "credential": "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d",
+      "security": "none",
+      "network": "tcp"
+    },
+    "is_valid": false,
+    "expected_rejection": "SECURITY_NONE"
+  },
+  {
+    "name": "reject_reality_missing_sni",
+    "server": {
+      "id": "canon13",
+      "protocol": "VLESS",
+      "host": "vpn.example.com",
+      "port": 443,
+      "credential": "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d",
+      "security": "reality",
+      "sni": "",
+      "realityPublicKey": "1111111111111111111111111111111111111111111",
+      "network": "tcp"
+    },
+    "is_valid": false,
+    "expected_rejection": "REALITY_SNI_MISSING"
+  },
+  {
+    "name": "reject_reality_pbk_invalid",
+    "server": {
+      "id": "canon14",
+      "protocol": "VLESS",
+      "host": "vpn.example.com",
+      "port": 443,
+      "credential": "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d",
+      "security": "reality",
+      "sni": "dl.google.com",
+      "realityPublicKey": "short_invalid_key",
+      "network": "tcp"
+    },
+    "is_valid": false,
+    "expected_rejection": "REALITY_PBK_INVALID"
+  },
+  {
+    "name": "reject_reality_sid_invalid_odd",
+    "server": {
+      "id": "canon15",
+      "protocol": "VLESS",
+      "host": "vpn.example.com",
+      "port": 443,
+      "credential": "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d",
+      "security": "reality",
+      "sni": "dl.google.com",
+      "realityPublicKey": "1111111111111111111111111111111111111111111",
+      "realityShortId": "123",
+      "network": "tcp"
+    },
+    "is_valid": false,
+    "expected_rejection": "REALITY_SID_INVALID"
+  },
+  {
+    "name": "reject_transport_unsupported",
+    "server": {
+      "id": "canon16",
+      "protocol": "VLESS",
+      "host": "vpn.example.com",
+      "port": 443,
+      "credential": "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d",
+      "security": "tls",
+      "network": "kcp"
+    },
+    "is_valid": false,
+    "expected_rejection": "TRANSPORT_UNSUPPORTED"
+  },
+  {
+    "name": "reject_control_characters",
+    "server": {
+      "id": "canon17",
+      "protocol": "VLESS",
+      "host": "vpn.example\u0000.com",
+      "port": 443,
+      "credential": "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d",
+      "security": "tls",
+      "network": "tcp"
+    },
+    "is_valid": false,
+    "expected_rejection": "CONTROL_CHARS"
+  }
+]

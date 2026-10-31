@@ -1,0 +1,33 @@
+name: MAXNET5G Auto Free VPN Collector
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  collect-and-validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Collect, sanitize, deduplicate, and validate public VPN candidates
+        run: python3 scripts/collect_and_validate_configs.py
+
+      - name: Publish updated candidate feed
+        run: |
+          git config user.name "maxnet5g-auto-collector[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/api/v1/candidates.json
+          git diff --staged --quiet || git commit -m "chore(auto-vpn): update validated public candidate feed [skip ci]"
+          git push

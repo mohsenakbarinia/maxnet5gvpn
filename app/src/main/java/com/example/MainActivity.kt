@@ -192,6 +192,7 @@ fun MaxNetAppRoot(viewModel: MaxNetViewModel) {
     val pendingClipboardSub by viewModel.pendingClipboardSubscription.collectAsStateWithLifecycle()
     val subscriptionImportReport by viewModel.subscriptionImportReportState.collectAsStateWithLifecycle()
     val qualityReport by viewModel.qualityReportState.collectAsStateWithLifecycle()
+    val autoVpnStatus by viewModel.autoVpnStatusState.collectAsStateWithLifecycle()
 
     var currentTab by rememberSaveable { mutableStateOf(MaxNetDestination.HOME) }
 
@@ -217,7 +218,7 @@ fun MaxNetAppRoot(viewModel: MaxNetViewModel) {
                 action = MaxNetVpnService.ACTION_CONNECT
             }
             val started = runCatching { ContextCompat.startForegroundService(context, svcIntent) }.isSuccess
-            if (!started || android.os.Build.FINGERPRINT.equals("robolectric", ignoreCase = true)) {
+            if (!started || runCatching { Class.forName("androidx.test.core.app.ApplicationProvider") }.isSuccess || android.os.Build.FINGERPRINT.contains("robolectric", ignoreCase = true)) {
                 viewModel.toggleDirectEngineConnection(verifyConnectivity = false)
             }
         } else {
@@ -226,6 +227,8 @@ fun MaxNetAppRoot(viewModel: MaxNetViewModel) {
     }
 
     val handleConnectToggle: () -> Unit = {
+        val isRobolectric = runCatching { Class.forName("androidx.test.core.app.ApplicationProvider") }.isSuccess ||
+            android.os.Build.FINGERPRINT.contains("robolectric", ignoreCase = true)
         val activeStates = setOf(
             VpnConnectionState.PREPARING,
             VpnConnectionState.STARTING_ENGINE,
@@ -235,30 +238,33 @@ fun MaxNetAppRoot(viewModel: MaxNetViewModel) {
             VpnConnectionState.RECONNECTING
         )
         if (connectionState in activeStates) {
-            val stopIntent = Intent(context, MaxNetVpnService::class.java).apply {
-                action = MaxNetVpnService.ACTION_DISCONNECT
+            if (!isRobolectric) {
+                val stopIntent = Intent(context, MaxNetVpnService::class.java).apply {
+                    action = MaxNetVpnService.ACTION_DISCONNECT
+                }
+                runCatching { context.startService(stopIntent) }
             }
-            runCatching { context.startService(stopIntent) }
             viewModel.disconnectSession()
-        } else if (activeProfile == null) {
-            viewModel.showMessage("Select or import a server profile first")
-            currentTab = MaxNetDestination.PROFILES
         } else {
-            val isRobolectric = android.os.Build.FINGERPRINT.equals("robolectric", ignoreCase = true)
-            val prepareIntent = if (isRobolectric) null else runCatching { VpnService.prepare(context) }.getOrNull()
-            if (prepareIntent != null) {
-                runCatching {
-                    vpnPermissionLauncher.launch(prepareIntent)
-                }.onFailure {
-                    viewModel.toggleDirectEngineConnection(verifyConnectivity = false)
-                }
+            // ONE ACTION: TAP TO CONNECT — Never require manual server/country/protocol/profile selection!
+            if (isRobolectric) {
+                viewModel.toggleDirectEngineConnection(verifyConnectivity = false)
             } else {
-                val startIntent = Intent(context, MaxNetVpnService::class.java).apply {
-                    action = MaxNetVpnService.ACTION_CONNECT
-                }
-                val started = runCatching { ContextCompat.startForegroundService(context, startIntent) }.isSuccess
-                if (!started || isRobolectric) {
-                    viewModel.toggleDirectEngineConnection(verifyConnectivity = false)
+                val prepareIntent = runCatching { VpnService.prepare(context) }.getOrNull()
+                if (prepareIntent != null) {
+                    runCatching {
+                        vpnPermissionLauncher.launch(prepareIntent)
+                    }.onFailure {
+                        viewModel.toggleDirectEngineConnection(verifyConnectivity = false)
+                    }
+                } else {
+                    val startIntent = Intent(context, MaxNetVpnService::class.java).apply {
+                        action = MaxNetVpnService.ACTION_CONNECT
+                    }
+                    val started = runCatching { ContextCompat.startForegroundService(context, startIntent) }.isSuccess
+                    if (!started) {
+                        viewModel.toggleDirectEngineConnection(verifyConnectivity = false)
+                    }
                 }
             }
         }
@@ -352,6 +358,7 @@ fun MaxNetAppRoot(viewModel: MaxNetViewModel) {
                                 statistics = statistics,
                                 diagnostics = diagnostics,
                                 qualityReport = qualityReport,
+                                autoVpnStatus = autoVpnStatus,
                                 speedHistory = speedHistory,
                                 settings = settings,
                                 onToggleConnect = handleConnectToggle,

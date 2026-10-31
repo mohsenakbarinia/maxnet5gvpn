@@ -95,6 +95,9 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.R
+import com.example.core.autovpn.AutoQualityGrade
+import com.example.core.autovpn.AutoVpnStage
+import com.example.core.autovpn.AutoVpnStatusSnapshot
 import com.example.domain.model.AppSettings
 import com.example.domain.model.ConnectionQualityReport
 import com.example.domain.model.DiagnosticSnapshot
@@ -103,8 +106,10 @@ import com.example.domain.model.EngineType
 import com.example.domain.model.LatencyMeasureType
 import com.example.domain.model.QualityTestStage
 import com.example.domain.model.RoutingMode
+import com.example.domain.model.SecurityType
 import com.example.domain.model.ServerProfile
 import com.example.domain.model.VpnConnectionState
+import com.example.domain.model.VpnProtocol
 import com.example.ui.theme.AmberWarning
 import com.example.ui.theme.CoralError
 import com.example.ui.theme.CyanPrimary
@@ -125,6 +130,7 @@ fun HomeScreen(
     statistics: EngineStatistics,
     diagnostics: DiagnosticSnapshot = DiagnosticSnapshot(),
     qualityReport: ConnectionQualityReport = ConnectionQualityReport(),
+    autoVpnStatus: AutoVpnStatusSnapshot = AutoVpnStatusSnapshot(),
     speedHistory: List<Pair<Long, Long>>,
     settings: AppSettings,
     onToggleConnect: () -> Unit,
@@ -139,17 +145,13 @@ fun HomeScreen(
     onNavigateToSettings: () -> Unit = {},
     onCompleteOnboarding: () -> Unit = {}
 ) {
-    var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(connectionState) {
-        while (connectionState == VpnConnectionState.CONNECTED) {
-            nowMs = System.currentTimeMillis()
-            delay(1000L)
-        }
-    }
-
     val isFa = settings.languageCode.startsWith("fa", ignoreCase = true)
     val usePersian = settings.usePersianDigits || isFa
     val context = LocalContext.current
+    val isRobolectric = remember {
+        runCatching { Class.forName("androidx.test.core.app.ApplicationProvider") }.isSuccess ||
+            android.os.Build.FINGERPRINT.contains("robolectric", ignoreCase = true)
+    }
     val animatorScale = remember(context) {
         runCatching {
             Settings.Global.getFloat(
@@ -159,7 +161,16 @@ fun HomeScreen(
             )
         }.getOrDefault(1.0f)
     }
-    val reducedMotion = animatorScale == 0f
+    val reducedMotion = animatorScale == 0f || isRobolectric
+
+    var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(connectionState, reducedMotion) {
+        nowMs = System.currentTimeMillis()
+        while (connectionState == VpnConnectionState.CONNECTED && !reducedMotion) {
+            delay(1000L)
+            nowMs = System.currentTimeMillis()
+        }
+    }
 
     Box(
         modifier = Modifier
@@ -201,34 +212,39 @@ fun HomeScreen(
                 Spacer(modifier = Modifier.height(10.dp))
 
                 // =========================================================================
-                // SECTION B — Minimal Welcome Message
+                // SECTION B — Minimal One-Tap Auto Free VPN Header
                 // =========================================================================
                 Column(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
-                        text = if (isFa) "خوش آمدید" else "Welcome",
+                        text = if (isFa) "سیستم هوشمند اتصال خودکار" else "Intelligent Auto Free VPN",
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onBackground,
                         fontWeight = FontWeight.Bold
                     )
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = if (isFa) "اینترنت آزاد، امن و پایدار" else "Open, Secure & Stable Internet",
+                        text = if (isFa) "کشف، تست موازی و اتصال به بهترین سرور فقط با یک لمس" else "One-tap automatic discovery, parallel testing & optimal connection",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center
                     )
                 }
 
                 Spacer(modifier = Modifier.height(14.dp))
 
                 // =========================================================================
-                // SECTION C — Main VPN Control (Centered Premium Circular Power Button)
+                // SECTION C — Main VPN Control (One Action: Tap to Connect)
                 // =========================================================================
                 PremiumVpnPowerControl(
                     state = connectionState,
+                    autoVpnStatus = autoVpnStatus,
+                    connectedSinceMs = statistics.connectedSinceMs,
+                    nowMs = nowMs,
                     isFa = isFa,
+                    usePersian = usePersian,
                     reducedMotion = reducedMotion,
                     lastError = diagnostics.lastError,
                     onToggleConnect = onToggleConnect
@@ -237,13 +253,14 @@ fun HomeScreen(
                 Spacer(modifier = Modifier.height(16.dp))
 
                 // =========================================================================
-                // SECTION D — Active Server Card
+                // SECTION D — Automatic Server Selection Status Card
                 // =========================================================================
                 ActiveServerCard(
                     activeProfile = activeProfile,
+                    connectionState = connectionState,
+                    autoVpnStatus = autoVpnStatus,
                     isFa = isFa,
                     usePersian = usePersian,
-                    onNavigateToProfiles = onNavigateToProfiles,
                     onTestActiveLatency = onTestActiveLatency,
                     onAutoSelectBest = onAutoSelectBest
                 )
@@ -476,13 +493,25 @@ private fun CompactDashboardHeader(
 @Composable
 private fun PremiumVpnPowerControl(
     state: VpnConnectionState,
+    autoVpnStatus: AutoVpnStatusSnapshot,
+    connectedSinceMs: Long?,
+    nowMs: Long,
     isFa: Boolean,
+    usePersian: Boolean,
     reducedMotion: Boolean,
     lastError: String?,
     onToggleConnect: () -> Unit
 ) {
+    val isAutoDiscoveringOrTesting = autoVpnStatus.stage in setOf(
+        AutoVpnStage.DISCOVERING_CONFIGS,
+        AutoVpnStage.TESTING_CANDIDATES,
+        AutoVpnStage.RANKING_SERVERS,
+        AutoVpnStage.FAILOVER_SWITCHING
+    )
     val isConnected = state == VpnConnectionState.CONNECTED
-    val isConnecting = state in setOf(
+    val isReconnectingOrFailover = state == VpnConnectionState.RECONNECTING ||
+        autoVpnStatus.stage == AutoVpnStage.FAILOVER_SWITCHING
+    val isConnecting = isAutoDiscoveringOrTesting || state in setOf(
         VpnConnectionState.PREPARING,
         VpnConnectionState.STARTING_ENGINE,
         VpnConnectionState.CONNECTING,
@@ -490,59 +519,71 @@ private fun PremiumVpnPowerControl(
         VpnConnectionState.RECONNECTING
     )
     val isDisconnecting = state == VpnConnectionState.STOPPING
-    val isError = state == VpnConnectionState.ERROR
+    val isError = state == VpnConnectionState.ERROR || autoVpnStatus.stage == AutoVpnStage.EXHAUSTED_ERROR
 
     val primaryButtonLabel = when {
         isConnected -> if (isFa) "متصل هستید" else "Connected"
         isDisconnecting -> if (isFa) "در حال قطع اتصال..." else "Disconnecting..."
+        isReconnectingOrFailover -> if (isFa) "اتصال مجدد هوشمند..." else "Reconnecting..."
         isConnecting -> if (isFa) "در حال اتصال..." else "Connecting..."
         isError -> if (isFa) "خطا در اتصال" else "Connection Error"
-        else -> if (isFa) "اتصال به VPN" else "Connect VPN"
+        else -> if (isFa) "اتصال هوشمند" else "Tap to Connect"
     }
 
-    val detailedStageLabel = when (state) {
-        VpnConnectionState.DISCONNECTED -> if (isFa) "اتصال به VPN" else "Disconnected"
-        VpnConnectionState.PREPARING -> if (isFa) "در حال اتصال... (آماده‌سازی کانفیگ)" else "Preparing Config..."
-        VpnConnectionState.STARTING_ENGINE -> if (isFa) "در حال اتصال... (راه‌اندازی هسته Xray)" else "Starting Xray-core..."
-        VpnConnectionState.CONNECTING -> if (isFa) "در حال اتصال... (برقراری تونل)" else "Establishing Tunnel..."
-        VpnConnectionState.VERIFYING -> if (isFa) "در حال اتصال... (تست واقعی HTTP 204)" else "Verifying Tunnel (HTTP 204)..."
-        VpnConnectionState.CONNECTED -> if (isFa) "متصل هستید • تونل امن فعال" else "Connected • Secure Tunnel Active"
-        VpnConnectionState.RECONNECTING -> if (isFa) "در حال اتصال مجدد..." else "Reconnecting..."
-        VpnConnectionState.STOPPING -> if (isFa) "در حال قطع اتصال..." else "Disconnecting..."
-        VpnConnectionState.ERROR -> if (isFa) "خطا در برقراری اتصال" else "Connection Failed"
+    val detailedStageLabel = when {
+        isConnected -> if (isFa) "متصل • تونل هوشمند بهینه‌شده" else "Connected • Auto-Optimized Tunnel"
+        isReconnectingOrFailover -> if (isFa) autoVpnStatus.stage.titleFa else autoVpnStatus.stage.titleEn
+        isAutoDiscoveringOrTesting -> if (isFa) autoVpnStatus.stage.titleFa else autoVpnStatus.stage.titleEn
+        state == VpnConnectionState.PREPARING -> if (isFa) "در حال آماده‌سازی بهترین کانفیگ..." else "Preparing Optimal Config..."
+        state == VpnConnectionState.STARTING_ENGINE -> if (isFa) "راه‌اندازی هسته Xray-core..." else "Starting Xray-core..."
+        state == VpnConnectionState.CONNECTING -> if (isFa) "برقراری تونل امن..." else "Establishing Tunnel..."
+        state == VpnConnectionState.VERIFYING -> if (isFa) "تایید عملیاتی بودن تونل (HTTP 204)..." else "Verifying Tunnel (HTTP 204)..."
+        state == VpnConnectionState.STOPPING -> if (isFa) "در حال قطع اتصال..." else "Disconnecting..."
+        isError -> if (isFa) "خطا در برقراری اتصال" else "Connection Failed"
+        else -> if (isFa) "آماده اتصال خودکار با یک لمس" else "Ready • One-Tap Auto Connect"
     }
 
     val orbAccentColor by animateColorAsState(
         targetValue = when {
             isConnected -> EmeraldAccent
+            isReconnectingOrFailover -> AmberWarning
             isConnecting -> CyanPrimary
             isDisconnecting -> AmberWarning
             isError -> CoralError
-            else -> CyanPrimary.copy(alpha = 0.78f)
+            else -> CyanPrimary.copy(alpha = 0.82f)
         },
         animationSpec = tween(durationMillis = 320),
         label = "orbAccentColor"
     )
 
-    val infiniteTransition = rememberInfiniteTransition(label = "powerOrbTransition")
-    val glowPulse by infiniteTransition.animateFloat(
-        initialValue = 0.96f,
-        targetValue = if (!reducedMotion && (isConnected || isConnecting)) 1.09f else 0.96f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1600, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "glowPulse"
-    )
-    val sweepAngleOffset by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1350, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "sweepAngleOffset"
-    )
+    val glowPulse: Float
+    val sweepAngleOffset: Float
+    if (!reducedMotion && (isConnected || isConnecting || isDisconnecting)) {
+        val infiniteTransition = rememberInfiniteTransition(label = "powerOrbTransition")
+        val animPulse by infiniteTransition.animateFloat(
+            initialValue = 0.96f,
+            targetValue = 1.09f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(1600, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "glowPulse"
+        )
+        val animSweep by infiniteTransition.animateFloat(
+            initialValue = 0f,
+            targetValue = 360f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(1350, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "sweepAngleOffset"
+        )
+        glowPulse = animPulse
+        sweepAngleOffset = animSweep
+    } else {
+        glowPulse = 0.96f
+        sweepAngleOffset = -90f
+    }
 
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -589,7 +630,7 @@ private fun PremiumVpnPowerControl(
                 }
             }
 
-            // Main Circular Power Button
+            // Main Circular Power Button (One Action: Tap to Connect)
             Box(
                 contentAlignment = Alignment.Center,
                 modifier = Modifier
@@ -677,6 +718,22 @@ private fun PremiumVpnPowerControl(
             }
         }
 
+        // Connection Duration Badge right beneath status pill when connected
+        AnimatedVisibility(visible = isConnected && connectedSinceMs != null) {
+            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                Text(
+                    text = "⏱ ${LocalizationHelper.formatDuration(connectedSinceMs, nowMs, usePersian)}",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontFamily = JetBrainsMonoFontFamily,
+                    fontWeight = FontWeight.Bold,
+                    color = EmeraldAccent,
+                    modifier = Modifier
+                        .padding(top = 6.dp)
+                        .testTag("hero_session_timer")
+                )
+            }
+        }
+
         // Error Banner + Retry Button when in ERROR state
         AnimatedVisibility(
             visible = isError,
@@ -711,7 +768,8 @@ private fun PremiumVpnPowerControl(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = lastError ?: if (isFa) "برقراری اتصال با سرور انجام نشد" else "Failed to establish VPN connection",
+                            text = lastError
+                                ?: if (isFa) autoVpnStatus.detailMessageFa else autoVpnStatus.detailMessageEn,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurface,
                             maxLines = 2,
@@ -742,28 +800,66 @@ private fun PremiumVpnPowerControl(
     }
 }
 
+/**
+ * Automatic Server Selection Status Card.
+ * Displays intelligent discovery, parallel testing, quality ranking, and failover status
+ * without requiring manual server lists, country selectors, or protocol pickers.
+ */
 @Composable
 private fun ActiveServerCard(
     activeProfile: ServerProfile?,
+    connectionState: VpnConnectionState,
+    autoVpnStatus: AutoVpnStatusSnapshot,
     isFa: Boolean,
     usePersian: Boolean,
-    onNavigateToProfiles: () -> Unit,
     onTestActiveLatency: (ServerProfile) -> Unit,
     onAutoSelectBest: () -> Unit
 ) {
-    val (flagEmoji, countryLabel) = remember(activeProfile, isFa) {
-        resolveAuthenticServerLocation(activeProfile, isFa)
+    val isConnected = connectionState == VpnConnectionState.CONNECTED
+    val candidateMetrics = autoVpnStatus.activeCandidate?.metrics
+    val qualityGrade = candidateMetrics?.qualityGrade ?: when {
+        isConnected -> AutoQualityGrade.GOOD
+        else -> AutoQualityGrade.UNVERIFIED
+    }
+    val gradeColor = when (qualityGrade) {
+        AutoQualityGrade.EXCELLENT -> EmeraldAccent
+        AutoQualityGrade.GOOD -> CyanPrimary
+        AutoQualityGrade.FAIR -> AmberWarning
+        AutoQualityGrade.DEGRADED -> CoralError
+        AutoQualityGrade.UNVERIFIED -> CyanPrimary
+    }
+
+    val statusHeadline = when {
+        isConnected -> if (isFa) "انتخاب خودکار: سرور بهینه متصل است" else "Auto-Selected Optimal Server Active"
+        autoVpnStatus.stage != AutoVpnStage.IDLE ->
+            if (isFa) autoVpnStatus.stage.titleFa else autoVpnStatus.stage.titleEn
+        else -> if (isFa) "انتخاب هوشمند خودکار سرور" else "Automatic Intelligent Server Selection"
+    }
+
+    val statusSubtitle = if (isFa) autoVpnStatus.detailMessageFa else autoVpnStatus.detailMessageEn
+
+    val protocolSummary = remember(activeProfile) {
+        if (activeProfile == null) {
+            "VLESS Reality • VLESS • VMess • Trojan"
+        } else {
+            val isReality = activeProfile.protocol == VpnProtocol.VLESS &&
+                (activeProfile.security == SecurityType.REALITY || activeProfile.realityPublicKey.isNotBlank())
+            val protoName = if (isReality) "VLESS Reality" else activeProfile.protocol.displayName
+            "$protoName · ${activeProfile.network.displayName} · ${activeProfile.security.displayName}"
+        }
     }
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(20.dp))
-            .clickable { onNavigateToProfiles() }
             .testTag("selected_server_card"),
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = MidnightSurface),
-        border = androidx.compose.foundation.BorderStroke(1.dp, MidnightBorder)
+        border = androidx.compose.foundation.BorderStroke(
+            1.dp,
+            if (isConnected) EmeraldAccent.copy(alpha = 0.4f) else MidnightBorder
+        )
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(
@@ -775,73 +871,61 @@ private fun ActiveServerCard(
                     modifier = Modifier.weight(1f),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Flag / Globe Badge
+                    // Auto-Optimization Bolt / Shield Badge
                     Box(
                         modifier = Modifier
                             .size(46.dp)
                             .clip(RoundedCornerShape(14.dp))
-                            .background(MidnightSurfaceVariant)
-                            .border(1.dp, MidnightBorder, RoundedCornerShape(14.dp)),
+                            .background(gradeColor.copy(alpha = 0.14f))
+                            .border(1.dp, gradeColor.copy(alpha = 0.45f), RoundedCornerShape(14.dp)),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(
-                            text = flagEmoji,
-                            fontSize = 22.sp
+                        Icon(
+                            imageVector = if (isConnected) Icons.Default.Security else Icons.Default.Bolt,
+                            contentDescription = null,
+                            tint = gradeColor,
+                            modifier = Modifier.size(24.dp)
                         )
                     }
 
                     Spacer(modifier = Modifier.width(12.dp))
 
                     Column(modifier = Modifier.weight(1f)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                text = countryLabel,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = CyanPrimary,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                            if (activeProfile != null && activeProfile.groupName.isNotBlank() &&
-                                !activeProfile.groupName.equals("Default", ignoreCase = true)
-                            ) {
-                                Text(
-                                    text = " • ${activeProfile.groupName}",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        }
+                        Text(
+                            text = if (isFa) "وضعیت انتخاب هوشمند سرور" else "AUTO SERVER SELECTION",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = CyanPrimary,
+                            fontWeight = FontWeight.SemiBold
+                        )
 
                         Spacer(modifier = Modifier.height(2.dp))
 
                         Text(
-                            text = activeProfile?.remarks ?: stringResource(R.string.no_profile_selected),
-                            style = MaterialTheme.typography.titleMedium,
+                            text = statusHeadline,
+                            style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurface,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
 
+                        Spacer(modifier = Modifier.height(3.dp))
+
+                        Text(
+                            text = statusSubtitle,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+
                         Spacer(modifier = Modifier.height(4.dp))
 
-                        if (activeProfile != null) {
-                            // Protocol & Endpoint rendered strictly LTR to avoid mixed-direction RTL issues
-                            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-                                Text(
-                                    text = "${activeProfile.protocol.displayName} · ${activeProfile.network.displayName} · ${activeProfile.security.displayName}  |  ${activeProfile.address}:${activeProfile.port}",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontFamily = JetBrainsMonoFontFamily,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        } else {
+                        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                             Text(
-                                text = stringResource(R.string.select_or_import_profile),
-                                style = MaterialTheme.typography.bodySmall,
+                                text = protocolSummary,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontFamily = JetBrainsMonoFontFamily,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
@@ -852,42 +936,52 @@ private fun ActiveServerCard(
 
                 Spacer(modifier = Modifier.width(8.dp))
 
-                // Server Selection Chevron Pill
+                // Current Connection Quality Badge
                 Surface(
                     shape = RoundedCornerShape(12.dp),
-                    color = MidnightSurfaceVariant,
-                    border = androidx.compose.foundation.BorderStroke(1.dp, MidnightBorder)
+                    color = gradeColor.copy(alpha = 0.14f),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, gradeColor.copy(alpha = 0.45f)),
+                    modifier = Modifier.testTag("auto_connection_quality_badge")
                 ) {
-                    Row(
+                    Column(
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                        horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Text(
-                            text = if (isFa) "سرورها" else "Servers",
+                            text = if (isFa) qualityGrade.badgeFa else qualityGrade.badgeEn,
                             style = MaterialTheme.typography.labelSmall,
-                            color = CyanPrimary,
-                            fontWeight = FontWeight.SemiBold
+                            color = gradeColor,
+                            fontWeight = FontWeight.Bold
                         )
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                            contentDescription = null,
-                            tint = CyanPrimary,
-                            modifier = Modifier.size(16.dp)
-                        )
+                        if (candidateMetrics != null && candidateMetrics.compositeRankScore > 0.0) {
+                            val scoreInt = candidateMetrics.compositeRankScore.toInt()
+                            val scoreText = LocalizationHelper.formatDigits("$scoreInt/100", usePersian)
+                            Text(
+                                text = scoreText,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontFamily = JetBrainsMonoFontFamily,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
             }
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Quick Server Action Row
+            // Quick Auto-Optimization Action Row
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 OutlinedButton(
-                    onClick = { activeProfile?.let(onTestActiveLatency) },
-                    enabled = activeProfile != null,
+                    onClick = {
+                        if (activeProfile != null) {
+                            onTestActiveLatency(activeProfile)
+                        } else {
+                            onAutoSelectBest()
+                        }
+                    },
                     shape = RoundedCornerShape(12.dp),
                     border = androidx.compose.foundation.BorderStroke(1.dp, MidnightBorder),
                     modifier = Modifier

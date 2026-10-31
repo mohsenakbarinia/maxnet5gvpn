@@ -88,59 +88,120 @@ class MaxNetVpnService : VpnService() {
 
     private suspend fun connectVpn() {
         val settings = repository.settingsFlow.first()
-        val profiles = repository.getAllProfilesSnapshot()
-        val selectedProfile = profiles.find { it.id == settings.selectedProfileId }
-            ?: profiles.firstOrNull()
-
-        if (selectedProfile == null) {
-            repository.appendLog("ERROR", "VpnService", "Cannot connect: no server profile configured")
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
-            return
-        }
-
         val rules = repository.getRoutingRulesSnapshot()
         val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val autoManager = VpnController.getOrCreateAutoFreeVpnManager(applicationContext)
 
-        val result = VpnController.startSession(
-            context = applicationContext,
-            profile = selectedProfile,
-            settings = settings,
-            rules = rules,
-            establishTunAndForwarder = { localSocksPort ->
-                setupTunAndPacketForwarder(selectedProfile, settings, localSocksPort)
+        val existingProfiles = repository.getAllProfilesSnapshot()
+        val explicitlySelected = existingProfiles.find { it.id == settings.selectedProfileId }
+
+        // Prioritize user's currently selected profile at the front of existing profiles while enabling automatic discovery & failover
+        val orderedExisting = if (explicitlySelected != null) {
+            listOf(explicitlySelected) + existingProfiles.filter { it.id != explicitlySelected.id }
+        } else {
+            existingProfiles
+        }
+
+        val outcome = autoManager.connectOneTapAuto(
+            existingProfiles = orderedExisting,
+            fetchRemoteIfNeeded = orderedExisting.size < 6,
+            onPersistAndSelectCandidate = { candidate, latencyMs ->
+                val allNow = repository.getAllProfilesSnapshot()
+                val existingMatch = allNow.find { it.uniqueFingerprintKey() == candidate.uniqueFingerprintKey() }
+                val savedProfile = if (existingMatch != null) {
+                    if (latencyMs != null) {
+                        repository.updateProfileLatency(
+                            existingMatch.id,
+                            latencyMs,
+                            com.example.domain.model.LatencyMeasureType.TCP_HANDSHAKE
+                        )
+                    }
+                    existingMatch.copy(lastLatencyMs = latencyMs ?: existingMatch.lastLatencyMs)
+                } else {
+                    val toSave = if (latencyMs != null) candidate.copy(lastLatencyMs = latencyMs) else candidate
+                    val newId = repository.saveProfile(toSave)
+                    toSave.copy(id = newId)
+                }
+                repository.selectProfile(savedProfile.id)
+                savedProfile
             },
-            protectSocket = { fd -> protect(fd) },
-            verifyConnectivity = true,
-            onStateChanged = { state ->
-                val stateLabel = when (state) {
-                    VpnConnectionState.PREPARING -> "Preparing config…"
-                    VpnConnectionState.STARTING_ENGINE -> "Starting Xray-core…"
-                    VpnConnectionState.CONNECTING -> "Establishing TUN & SOCKS5…"
-                    VpnConnectionState.VERIFYING -> "Verifying proxy connection…"
-                    VpnConnectionState.CONNECTED -> "${selectedProfile.remarks} (${selectedProfile.protocol.displayName})"
-                    VpnConnectionState.RECONNECTING -> "Reconnecting ${selectedProfile.remarks}…"
-                    VpnConnectionState.STOPPING -> "Stopping VPN…"
-                    VpnConnectionState.ERROR -> "Connection failed"
-                    VpnConnectionState.DISCONNECTED -> "Disconnected"
-                }
-                runCatching {
-                    notificationManager.notify(
-                        NOTIFICATION_ID,
-                        buildForegroundNotification(stateLabel)
-                    )
-                }
+            onAttemptConnectAndVerify = { candidateProfile ->
+                val sessionResult = VpnController.startSession(
+                    context = applicationContext,
+                    profile = candidateProfile,
+                    settings = settings,
+                    rules = rules,
+                    establishTunAndForwarder = { localSocksPort ->
+                        setupTunAndPacketForwarder(candidateProfile, settings, localSocksPort)
+                    },
+                    protectSocket = { fd -> protect(fd) },
+                    verifyConnectivity = true,
+                    onStateChanged = { state ->
+                        val stateLabel = when (state) {
+                            VpnConnectionState.PREPARING -> "Preparing config…"
+                            VpnConnectionState.STARTING_ENGINE -> "Starting Xray-core…"
+                            VpnConnectionState.CONNECTING -> "Establishing TUN & SOCKS5…"
+                            VpnConnectionState.VERIFYING -> "Verifying proxy connection…"
+                            VpnConnectionState.CONNECTED -> "${candidateProfile.remarks} (${candidateProfile.protocol.displayName})"
+                            VpnConnectionState.RECONNECTING -> "Switching / Reconnecting ${candidateProfile.remarks}…"
+                            VpnConnectionState.STOPPING -> "Stopping VPN…"
+                            VpnConnectionState.ERROR -> "Connection failed"
+                            VpnConnectionState.DISCONNECTED -> "Disconnected"
+                        }
+                        runCatching {
+                            notificationManager.notify(
+                                NOTIFICATION_ID,
+                                buildForegroundNotification(stateLabel)
+                            )
+                        }
+                    },
+                    onLog = { level, tag, msg ->
+                        repository.appendLog(level, tag, msg, listOf(candidateProfile.credential))
+                    }
+                )
+                sessionResult.map { VpnController.diagnostics.value.verifiedProxyLatencyMs }
+            },
+            onStopFailedSession = {
+                VpnController.stopSession()
+                TProxyService.stopTun2Socks()
+                closeTunInterface()
             },
             onLog = { level, tag, msg ->
-                repository.appendLog(level, tag, msg, listOf(selectedProfile.credential))
+                repository.appendLog(level, tag, msg)
             }
         )
 
-        if (result.isSuccess) {
+        if (outcome.isSuccess) {
+            val winner = outcome.getOrThrow().profile
             val latencySuffix = VpnController.diagnostics.value.verifiedProxyLatencyMs?.let { " • ${it}ms" } ?: ""
             notificationManager.notify(
                 NOTIFICATION_ID,
-                buildForegroundNotification("${selectedProfile.remarks} (${selectedProfile.protocol.displayName}$latencySuffix)")
+                buildForegroundNotification("${winner.remarks} (${winner.protocol.displayName}$latencySuffix)")
+            )
+            // Start continuous background health & quality optimization while connected
+            autoManager.startContinuousOptimization(
+                getConnectionState = { VpnController.connectionState.value },
+                getActiveTrafficBps = {
+                    val s = VpnController.statistics.value
+                    s.downloadSpeedBps + s.uploadSpeedBps
+                },
+                onHealthCheckActiveTunnel = {
+                    val verifyUrl = "https://www.gstatic.com/generate_204"
+                    val port = VpnController.statistics.value.localSocksPort
+                    if (port != null && port > 0) {
+                        val res = com.example.core.LatencyTester.testProxyHttp204Delay(winner, port, verifyUrl, 5000)
+                        if (res.latencyMs != null) {
+                            Result.success(res.latencyMs)
+                        } else {
+                            Result.failure(IllegalStateException(res.errorReason ?: "Tunnel unresponsive"))
+                        }
+                    } else {
+                        Result.failure(IllegalStateException("No active SOCKS port"))
+                    }
+                },
+                onTriggerFailoverReconnect = {
+                    connectVpn()
+                }
             )
         } else {
             TProxyService.stopTun2Socks()
@@ -272,6 +333,8 @@ class MaxNetVpnService : VpnService() {
                 statusNote = "Disconnected cleanly"
             )
         }
+        VpnController.getOrCreateAutoFreeVpnManager(applicationContext)
+            .stopContinuousOptimizationAndResetToIdle()
         VpnController.stopSession { level, tag, msg ->
             repository.appendLog(level, tag, msg)
         }

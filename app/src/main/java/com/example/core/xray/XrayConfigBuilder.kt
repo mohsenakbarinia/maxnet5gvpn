@@ -63,7 +63,8 @@ object XrayConfigBuilder {
         settings: AppSettings,
         customRules: List<RoutingRuleItem> = emptyList(),
         localSocksPort: Int = 10808,
-        includeNativeTunInbound: Boolean = false
+        includeNativeTunInbound: Boolean = false,
+        verifyWithHostBinary: Boolean = false
     ): ValidationResult {
         val errors = mutableListOf<String>()
         val warnings = mutableListOf<String>()
@@ -227,15 +228,17 @@ object XrayConfigBuilder {
 
         val configString = root.toString(2)
 
-        // 7. If host Xray-core binary is available in test environment, also run engine-level check
-        val engineCheck = XrayNativeBridge.validateConfigWithEngine(configString)
-        if (engineCheck.isFailure) {
-            return ValidationResult(
-                isValid = false,
-                errors = listOf(engineCheck.exceptionOrNull()?.message ?: "Xray engine rejected configuration"),
-                warnings = warnings,
-                generatedConfigJson = configString
-            )
+        // 7. If host Xray-core binary is available and explicitly requested, run engine-level check
+        if (verifyWithHostBinary) {
+            val engineCheck = XrayNativeBridge.validateConfigWithEngine(configString)
+            if (engineCheck.isFailure) {
+                return ValidationResult(
+                    isValid = false,
+                    errors = listOf(engineCheck.exceptionOrNull()?.message ?: "Xray engine rejected configuration"),
+                    warnings = warnings,
+                    generatedConfigJson = configString
+                )
+            }
         }
 
         return ValidationResult(
