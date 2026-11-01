@@ -7,15 +7,21 @@ import com.example.core.autovpn.AutoServerRanker
 import com.example.core.autovpn.AutoVpnCacheStore
 import com.example.core.autovpn.AutoVpnDiscoveryEngine
 import com.example.core.autovpn.AutoVpnStage
+import com.example.core.autovpn.ConnectionOwnership
+import com.example.core.autovpn.VpnAppMode
+import com.example.domain.model.AppSettings
 import com.example.domain.model.LatencyMeasureType
 import com.example.domain.model.SecurityType
 import com.example.domain.model.ServerProfile
 import com.example.domain.model.TransportType
+import com.example.domain.model.VpnConnectionState
 import com.example.domain.model.VpnProtocol
+import com.example.vpn.VpnController
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -25,6 +31,69 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
 class AutoFreeVpnSystemTest {
+
+    @Test
+    fun `official GitHub repository source feeds point exclusively to mohsenakbarinia maxnet5gvpn free-configs`() {
+        val feeds = AutoVpnDiscoveryEngine.defaultSourceFeeds
+        assertEquals(1, feeds.size)
+        val officialFeed = feeds.first()
+        assertEquals(
+            "https://raw.githubusercontent.com/mohsenakbarinia/maxnet5gvpn/main/free-configs/configs.txt",
+            officialFeed.url
+        )
+        assertEquals(
+            "https://raw.githubusercontent.com/mohsenakbarinia/maxnet5gvpn/main/free-configs/manifest.json",
+            officialFeed.manifestUrl
+        )
+    }
+
+    @Test
+    fun `manifest verification validates SHA-256 content hash and rejects tampered configs or version rollback`() {
+        val configsContent = """
+            # MAXNET5G Free Configs
+            vless://b831381d-6324-4d53-ad4f-8cda48b30811@104.16.132.229:443?encryption=none&security=reality&sni=www.cloudflare.com&fp=chrome&pbk=m2c2t6P8vK9xL1nQ4rS7uW0yA3bC5dE8fG1hJ4kM7nP&sid=a1b2c3d4&type=tcp&flow=xtls-rprx-vision#Node-1
+            trojan://d053503f-8546-4f75-9f61-0efc60d52033@104.21.48.84:443?security=tls&sni=cdn.cloudflare.com&type=tcp#Node-2
+        """.trimIndent()
+        val exactSha256 = AutoVpnDiscoveryEngine.computeSha256Hex(configsContent)
+
+        val validManifestJson = """
+            {
+              "schema_version": 1,
+              "version": 5,
+              "updated_at": "2026-11-01T00:00:00Z",
+              "config_count": 2,
+              "sha256": "$exactSha256",
+              "repository": "https://github.com/mohsenakbarinia/maxnet5gvpn",
+              "configs_path": "free-configs/configs.txt"
+            }
+        """.trimIndent()
+
+        // 1. Valid manifest + matching configsText succeeds
+        val verified = AutoVpnDiscoveryEngine.parseAndVerifyManifest(
+            manifestJson = validManifestJson,
+            configsText = configsContent,
+            previousVersion = 4
+        )
+        assertTrue("Expected valid manifest + matching SHA-256 to pass", verified.isSuccess)
+        assertEquals(5, verified.getOrThrow().version)
+        assertEquals(2, verified.getOrThrow().configCount)
+
+        // 2. Tampered configsText fails SHA-256 verification
+        val tampered = AutoVpnDiscoveryEngine.parseAndVerifyManifest(
+            manifestJson = validManifestJson,
+            configsText = "$configsContent\ntrojan://tampered@1.2.3.4:443#Tampered",
+            previousVersion = 4
+        )
+        assertTrue("Expected tampered configsText to fail SHA-256 check", tampered.isFailure)
+
+        // 3. Rollback version (remote version 5 < cached version 6) is rejected
+        val rollback = AutoVpnDiscoveryEngine.parseAndVerifyManifest(
+            manifestJson = validManifestJson,
+            configsText = configsContent,
+            previousVersion = 6
+        )
+        assertTrue("Expected older manifest version to be rejected", rollback.isFailure)
+    }
 
     @Test
     fun `discovery engine parses validates normalizes and deduplicates VLESS Reality VMess and Trojan while rejecting untrusted inputs`() {
@@ -151,9 +220,7 @@ class AutoFreeVpnSystemTest {
         assertEquals(fastOptimalServer.uniqueFingerprintKey(), ranked.first().profile.uniqueFingerprintKey())
         assertTrue(ranked.first().metrics.compositeRankScore > ranked.last().metrics.compositeRankScore)
 
-        // Continuous optimization hysteresis check:
-        // Should switch from slowServer to fastOptimalServer when traffic is idle,
-        // but NOT switch when user is actively downloading at high speed
+        // Continuous optimization hysteresis check
         val slowRanked = ranked.last()
         val fastRanked = ranked.first()
         assertTrue(
@@ -187,7 +254,7 @@ class AutoFreeVpnSystemTest {
         )
 
         val candidate1FailsOnConnect = ServerProfile(
-            id = 10L,
+            id = -10L,
             remarks = "Candidate-1-Fastest-But-Tunnel-Fails",
             protocol = VpnProtocol.VLESS,
             address = "104.16.132.229",
@@ -201,7 +268,7 @@ class AutoFreeVpnSystemTest {
         )
 
         val candidate2Succeeds = ServerProfile(
-            id = 20L,
+            id = -20L,
             remarks = "Candidate-2-Second-Best-Working",
             protocol = VpnProtocol.TROJAN,
             address = "104.21.48.84",
@@ -220,8 +287,8 @@ class AutoFreeVpnSystemTest {
             fetchRemoteIfNeeded = false,
             customLatencyProbe = { profile ->
                 val simulatedPing = when (profile.id) {
-                    10L -> 60L
-                    20L -> 110L
+                    -10L -> 60L
+                    -20L -> 110L
                     else -> 450L
                 }
                 LatencyTestOutcome(
@@ -235,7 +302,7 @@ class AutoFreeVpnSystemTest {
             },
             onAttemptConnectAndVerify = { profile ->
                 attemptedServers.add(profile.remarks)
-                if (profile.id == 10L) {
+                if (profile.id == -10L) {
                     Result.failure(IllegalStateException("Simulated HTTP 204 verification timeout"))
                 } else {
                     Result.success(105L)
@@ -261,5 +328,77 @@ class AutoFreeVpnSystemTest {
         val cand1Metrics = manager.cacheStore.getMetrics(candidate1FailsOnConnect.uniqueFingerprintKey())
         assertNotNull(cand1Metrics)
         assertTrue(cand1Metrics!!.isOnCooldown())
+    }
+
+    @Test
+    fun `shared engine connection ownership enforces exclusivity between FREE and PERSONAL modes`() = runBlocking {
+        VpnController.stopSession()
+        VpnController.resetAutoFreeVpnManagerForTests()
+        assertEquals(ConnectionOwnership.NONE, VpnController.ownershipState.value)
+
+        val freeProfile = ServerProfile(
+            id = -1001L,
+            remarks = "Free-Edge-Server",
+            protocol = VpnProtocol.VLESS,
+            address = "104.16.132.229",
+            port = 443,
+            credential = "b831381d-6324-4d53-ad4f-8cda48b30811",
+            network = TransportType.TCP,
+            security = SecurityType.REALITY,
+            sni = "www.cloudflare.com",
+            realityPublicKey = "m2c2t6P8vK9xL1nQ4rS7uW0yA3bC5dE8fG1hJ4kM7nP",
+            realityShortId = "a1b2c3d4"
+        )
+
+        val personalProfile = ServerProfile(
+            id = 42L,
+            remarks = "My-Private-Personal-Server",
+            protocol = VpnProtocol.TROJAN,
+            address = "104.21.48.84",
+            port = 443,
+            credential = "d053503f-8546-4f75-9f61-0efc60d52033",
+            network = TransportType.TCP,
+            security = SecurityType.TLS,
+            sni = "cdn.cloudflare.com"
+        )
+
+        // 1. Start Free VPN session -> ownership is FREE
+        val freeRes = VpnController.startSession(
+            profile = freeProfile,
+            settings = AppSettings(),
+            rules = emptyList(),
+            ownership = ConnectionOwnership.FREE,
+            verifyConnectivity = false
+        )
+        assertTrue(freeRes.isSuccess)
+        assertEquals(VpnConnectionState.CONNECTED, VpnController.connectionState.value)
+        assertEquals(ConnectionOwnership.FREE, VpnController.ownershipState.value)
+        assertEquals(freeProfile.remarks, VpnController.activeFreeProfile.value?.remarks)
+
+        // 2. Switch from FREE_VPN to MY_VPN -> stops Free VPN cleanly and releases activeFreeProfile
+        VpnController.switchMode(VpnAppMode.MY_VPN)
+        assertEquals(VpnAppMode.MY_VPN, VpnController.selectedVpnMode.value)
+        assertEquals(VpnConnectionState.DISCONNECTED, VpnController.connectionState.value)
+        assertEquals(ConnectionOwnership.NONE, VpnController.ownershipState.value)
+        assertNull(VpnController.activeFreeProfile.value)
+
+        // 3. Start Personal VPN session -> ownership is PERSONAL
+        val personalRes = VpnController.startSession(
+            profile = personalProfile,
+            settings = AppSettings(),
+            rules = emptyList(),
+            ownership = ConnectionOwnership.PERSONAL,
+            verifyConnectivity = false
+        )
+        assertTrue(personalRes.isSuccess)
+        assertEquals(VpnConnectionState.CONNECTED, VpnController.connectionState.value)
+        assertEquals(ConnectionOwnership.PERSONAL, VpnController.ownershipState.value)
+        assertNull(VpnController.activeFreeProfile.value)
+
+        // 4. Switch from MY_VPN back to FREE_VPN -> stops Personal VPN cleanly
+        VpnController.switchMode(VpnAppMode.FREE_VPN)
+        assertEquals(VpnAppMode.FREE_VPN, VpnController.selectedVpnMode.value)
+        assertEquals(VpnConnectionState.DISCONNECTED, VpnController.connectionState.value)
+        assertEquals(ConnectionOwnership.NONE, VpnController.ownershipState.value)
     }
 }

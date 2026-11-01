@@ -26,12 +26,14 @@ import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Coordinates the MAXNET5G Intelligent Auto Free VPN System:
- * 1. Automatic Configuration Discovery (multi-source public feeds + local validated cache)
- * 2. Controlled Parallel Candidate Testing (Semaphore-bounded, non-sequential)
- * 3. Intelligent Multi-Factor Server Ranking (AutoServerRanker)
- * 4. One-Tap Connection & Tunnel Verification
- * 5. Intelligent Failover with per-server cooldowns and exponential backoff
- * 6. Continuous Health & Quality Optimization
+ * 1. Automatic Configuration Discovery from the official MAXNET5G GitHub repository
+ *    (`free-configs/manifest.json` + `free-configs/configs.txt`) with SHA-256 verification
+ *    and isolated local cache fallback.
+ * 2. Controlled Parallel Candidate Testing (Semaphore-bounded, non-sequential).
+ * 3. Intelligent Multi-Factor Server Ranking (AutoServerRanker).
+ * 4. One-Tap Connection & Tunnel Verification.
+ * 5. Intelligent Failover with per-server cooldowns and exponential backoff.
+ * 6. Continuous Health & Quality Optimization.
  */
 class AutoFreeVpnManager(
     private val context: Context? = null,
@@ -48,7 +50,10 @@ class AutoFreeVpnManager(
 
     private val _statusState = MutableStateFlow(
         AutoVpnStatusSnapshot(
-            cachedValidatedCount = cacheStore.getCachedValidatedCount()
+            cachedValidatedCount = cacheStore.getCachedValidatedCount(),
+            manifestVersion = cacheStore.getLastManifest()?.version ?: 1,
+            manifestUpdatedAt = cacheStore.getLastManifest()?.updatedAt ?: "",
+            manifestSha256 = cacheStore.getLastManifest()?.sha256 ?: ""
         )
     )
     val statusState: StateFlow<AutoVpnStatusSnapshot> = _statusState.asStateFlow()
@@ -62,21 +67,23 @@ class AutoFreeVpnManager(
      * Discover -> Parallel Test -> Rank -> Select Best -> Connect & Verify -> Automatic Failover.
      */
     suspend fun connectOneTapAuto(
-        existingProfiles: List<ServerProfile>,
+        existingProfiles: List<ServerProfile> = emptyList(),
         fetchRemoteIfNeeded: Boolean = true,
         customDiscoveryFetcher: (suspend (String) -> String?)? = null,
         customLatencyProbe: (suspend (ServerProfile) -> LatencyTestOutcome)? = null,
-        onPersistAndSelectCandidate: suspend (ServerProfile, Long?) -> ServerProfile = { p, _ -> p },
+        onPersistAndSelectCandidate: suspend (ServerProfile, Long?) -> ServerProfile = { p, lat ->
+            if (lat != null) p.copy(lastLatencyMs = lat) else p
+        },
         onAttemptConnectAndVerify: suspend (ServerProfile) -> Result<Long?>,
         onStopFailedSession: suspend () -> Unit = {},
         onLog: (String, String, String) -> Unit = { _, _, _ -> }
     ): Result<RankedVpnCandidate> {
         try {
-            // Stage 1: Automatic Configuration Discovery
+            // Stage 1: Automatic Configuration Discovery from official MAXNET5G GitHub repository
             _statusState.value = _statusState.value.copy(
                 stage = AutoVpnStage.DISCOVERING_CONFIGS,
-                detailMessageEn = "Collecting validated public configurations (VLESS, Reality, VMess, Trojan)...",
-                detailMessageFa = "در حال دریافت خودکار کانفیگ‌های رایگان (VLESS, Reality, VMess, Trojan)...",
+                detailMessageEn = "Syncing verified free configurations from official GitHub repository...",
+                detailMessageFa = "در حال دریافت کانفیگ‌های رایگان تاییدشده از مخزن رسمی گیت‌هاب...",
                 failoverAttempt = 0,
                 lastUpdatedMs = System.currentTimeMillis()
             )
@@ -89,11 +96,18 @@ class AutoFreeVpnManager(
                 context = context,
                 existingProfiles = combinedExisting,
                 fetchRemoteSources = shouldFetchRemote,
+                cacheStore = cacheStore,
                 customFetcher = customDiscoveryFetcher
             )
 
             val candidatePool = (combinedExisting + discovered)
                 .distinctBy { it.uniqueFingerprintKey() }
+                .mapIndexed { idx, profile ->
+                    if (profile.id == 0L) profile.copy(id = -(idx + 1000L)) else profile
+                }
+
+            val latestManifest = cacheStore.getLastManifest()
+            val usingOfflineCache = !shouldFetchRemote || latestManifest == null
 
             if (candidatePool.isEmpty()) {
                 _statusState.value = _statusState.value.copy(
@@ -108,7 +122,7 @@ class AutoFreeVpnManager(
             onLog(
                 "INFO",
                 "AutoFreeVPN",
-                "Discovered ${candidatePool.size} unique validated candidates (Cached: ${cachedProfiles.size})"
+                "Discovered ${candidatePool.size} unique validated candidates (Cached: ${cachedProfiles.size}, Manifest v${latestManifest?.version ?: 1})"
             )
 
             // Pre-rank candidates using cached metrics & network compatibility to test the most promising batch first
@@ -125,6 +139,20 @@ class AutoFreeVpnManager(
                 testedCount = 0,
                 totalToTestCount = batchToTest.size,
                 cachedValidatedCount = cacheStore.getCachedValidatedCount(),
+                manifestVersion = latestManifest?.version ?: 1,
+                manifestUpdatedAt = latestManifest?.updatedAt ?: "",
+                manifestSha256 = latestManifest?.sha256 ?: "",
+                isUsingOfflineCache = usingOfflineCache,
+                lastSyncStatusEn = if (latestManifest != null) {
+                    "Synced GitHub Manifest v${latestManifest.version} (${candidatePool.size} servers)"
+                } else {
+                    "Ready • ${candidatePool.size} Validated Free Configurations"
+                },
+                lastSyncStatusFa = if (latestManifest != null) {
+                    "همگام با گیت‌هاب نسخه ${latestManifest.version} (${candidatePool.size} سرور)"
+                } else {
+                    "آماده • ${candidatePool.size} کانفیگ رایگان تاییدشده"
+                },
                 detailMessageEn = "Testing ${batchToTest.size} candidates in parallel...",
                 detailMessageFa = "در حال تست موازی ${batchToTest.size} سرور کاندید...",
                 lastUpdatedMs = System.currentTimeMillis()
@@ -211,14 +239,14 @@ class AutoFreeVpnManager(
                     failoverAttempt = index,
                     maxFailoverAttempts = candidatesToTry.size,
                     detailMessageEn = if (isFailover) {
-                        "Failover ($attemptNumber/${candidatesToTry.size}): Switching to ${persistedProfile.remarks}..."
+                        "Failover ($attemptNumber/${candidatesToTry.size}): Switching to optimal alternative..."
                     } else {
-                        "Connecting to top-ranked server: ${persistedProfile.remarks}..."
+                        "Connecting to top-ranked optimal server..."
                     },
                     detailMessageFa = if (isFailover) {
-                        "جایگزینی خودکار ($attemptNumber از ${candidatesToTry.size}): اتصال به ${persistedProfile.remarks}..."
+                        "جایگزینی خودکار ($attemptNumber از ${candidatesToTry.size}): اتصال به سرور جایگزین..."
                     } else {
-                        "در حال اتصال به بهترین سرور منتخب: ${persistedProfile.remarks}..."
+                        "در حال اتصال به بهترین سرور منتخب..."
                     },
                     lastUpdatedMs = System.currentTimeMillis()
                 )
@@ -379,8 +407,8 @@ class AutoFreeVpnManager(
                         ) {
                             _statusState.value = _statusState.value.copy(
                                 stage = AutoVpnStage.OPTIMIZING,
-                                detailMessageEn = "Switching to a substantially faster server (${bestChallenger.profile.remarks})...",
-                                detailMessageFa = "ارتقای خودکار اتصال به سرور سریع‌تر (${bestChallenger.profile.remarks})...",
+                                detailMessageEn = "Switching to a substantially faster server...",
+                                detailMessageFa = "ارتقای خودکار اتصال به سرور سریع‌تر...",
                                 lastUpdatedMs = System.currentTimeMillis()
                             )
                             onTriggerFailoverReconnect()

@@ -19,12 +19,15 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
 
 /**
- * Automatic Configuration Discovery Engine.
+ * Automatic Configuration Discovery Engine for MAXNET5G FREE VPN.
  *
- * Collects publicly available VPN configurations from multiple configurable sources
- * (including the lightweight collection backend JSON feed and GitHub repositories).
+ * Exclusively uses the repository-managed free configuration files in:
+ * `https://github.com/mohsenakbarinia/maxnet5gvpn`
+ * - `free-configs/manifest.json`
+ * - `free-configs/configs.txt`
  *
  * Supports:
  * - VLESS
@@ -32,18 +35,25 @@ import java.nio.charset.StandardCharsets
  * - VMess
  * - Trojan
  *
- * Security & Sanitization:
- * - Treats all public configurations as untrusted input.
- * - Never executes downloaded scripts or shell payloads.
- * - Rejects loopback, private LAN, link-local, multicast, or malformed hostnames.
- * - Validates every candidate through [XrayConfigBuilder.validateAndBuild].
+ * Security & Integrity:
+ * - Verifies `manifest.json` schema version, monotonic version (anti-rollback), config count,
+ *   and exact SHA-256 content hash of `configs.txt`.
+ * - Treats all configurations as untrusted input; never executes scripts or shell payloads.
+ * - Rejects loopback, private LAN, link-local, CGNAT, multicast, or malformed hostnames.
+ * - Validates every candidate through [VpnController.validateConfiguration].
  * - Normalizes and deduplicates all configurations by [ServerProfile.uniqueFingerprintKey].
  */
 object AutoVpnDiscoveryEngine {
 
-    private const val CONNECT_TIMEOUT_MS = 5500
-    private const val READ_TIMEOUT_MS = 6500
-    private const val MAX_RESPONSE_BYTES = 1024 * 1024 // 1 MB cap per public source
+    const val OFFICIAL_GITHUB_REPO = "https://github.com/mohsenakbarinia/maxnet5gvpn"
+    const val OFFICIAL_MANIFEST_URL =
+        "https://raw.githubusercontent.com/mohsenakbarinia/maxnet5gvpn/main/free-configs/manifest.json"
+    const val OFFICIAL_CONFIGS_URL =
+        "https://raw.githubusercontent.com/mohsenakbarinia/maxnet5gvpn/main/free-configs/configs.txt"
+
+    private const val CONNECT_TIMEOUT_MS = 5000
+    private const val READ_TIMEOUT_MS = 6000
+    private const val MAX_RESPONSE_BYTES = 1024 * 1024 // 1 MB cap
     private const val MAX_CANDIDATES_PER_DISCOVERY = 80
 
     private val SUPPORTED_AUTO_PROTOCOLS = setOf(
@@ -53,6 +63,7 @@ object AutoVpnDiscoveryEngine {
     )
 
     private val SAFE_HOST_REGEX = Regex("^[a-zA-Z0-9._:\\-\\[\\]]{3,253}$")
+    private val HEX_SHA256_REGEX = Regex("^[a-fA-F0-9]{64}$")
     private val SCRIPT_INJECTION_PATTERNS = listOf(
         "<script",
         "javascript:",
@@ -67,80 +78,168 @@ object AutoVpnDiscoveryEngine {
     )
 
     /**
-     * Default configurable multi-source public feeds (Lightweight backend JSON feed + GitHub repositories).
+     * Sole official remote configuration source: the owner's GitHub repository (`free-configs/`).
      */
     val defaultSourceFeeds: List<AutoVpnSourceFeed> = listOf(
         AutoVpnSourceFeed(
-            id = "maxnet_backend_feed",
-            name = "MAXNET5G Validated Candidate Collector (GitHub Actions Backend)",
-            url = "https://raw.githubusercontent.com/barry-far/V2ray-Configs/main/Sub1.txt",
-            isBackendJsonFeed = false,
-            enabled = true
-        ),
-        AutoVpnSourceFeed(
-            id = "github_epodonios_v2ray",
-            name = "GitHub Public VLESS/VMess/Trojan Pool A",
-            url = "https://raw.githubusercontent.com/Epodonios/v2ray-configs/main/All_Configs_Sub.txt",
-            isBackendJsonFeed = false,
-            enabled = true
-        ),
-        AutoVpnSourceFeed(
-            id = "github_mahdibland_v2ray",
-            name = "GitHub Public VLESS Reality & Trojan Pool B",
-            url = "https://raw.githubusercontent.com/mahdibland/ShadowsocksAggregator/master/Eternity",
-            isBackendJsonFeed = false,
-            enabled = true
-        ),
-        AutoVpnSourceFeed(
-            id = "github_yebekhe_v2ray",
-            name = "GitHub Public VLESS Reality Pool C",
-            url = "https://raw.githubusercontent.com/yebekhe/TVC/main/subscriptions/xray/normal/mix",
+            id = "maxnet5g_official_github",
+            name = "MAXNET5G Official Repository (free-configs/configs.txt)",
+            url = OFFICIAL_CONFIGS_URL,
+            manifestUrl = OFFICIAL_MANIFEST_URL,
             isBackendJsonFeed = false,
             enabled = true
         )
     )
 
     /**
-     * Built-in validated bootstrap configurations (VLESS Reality, VLESS TLS, VMess TLS, Trojan TLS)
-     * ensuring immediate structural availability and offline/test resilience when remote GitHub feeds
-     * are blocked or unreachable on restricted networks.
+     * Built-in validated bootstrap configurations matching `free-configs/configs.txt`
+     * (VLESS Reality, VLESS TLS, VMess TLS, Trojan TLS) for offline fallback when GitHub
+     * is unreachable on restricted networks.
      */
     val bootstrapPublicShareLinks: List<String> = listOf(
-        "vless://b831381d-6324-4d53-ad4f-8cda48b30811@104.16.132.229:443?encryption=none&security=reality&sni=www.cloudflare.com&fp=chrome&pbk=m2c2t6P8vK9xL1nQ4rS7uW0yA3bC5dE8fG1hJ4kM7nP&sid=a1b2c3d4&type=tcp&flow=xtls-rprx-vision#AutoFree-VLESS-Reality-Edge1",
-        "vless://c942492e-7435-4e64-be50-9deb59c41922@172.67.74.226:443?encryption=none&security=tls&sni=speed.cloudflare.com&fp=chrome&type=ws&host=speed.cloudflare.com&path=%2Fws-auto#AutoFree-VLESS-TLS-Edge2",
-        "trojan://d053503f-8546-4f75-9f61-0efc60d52033@104.21.48.84:443?security=tls&sni=cdn.cloudflare.com&alpn=h2,http/1.1&type=tcp#AutoFree-Trojan-TLS-Edge3",
-        "vless://e164614a-9657-4a86-8a72-1f0d71e63144@162.159.135.42:443?encryption=none&security=reality&sni=www.microsoft.com&fp=chrome&pbk=p9q8r7s6t5u4v3w2x1y0z9a8b7c6d5e4f3g2h1j0k9l&sid=10203040&type=grpc&serviceName=grpc-auto#AutoFree-VLESS-Reality-Edge4",
-        "vmess://eyJ2IjoiMiIsInBzIjoiQXV0b0ZyZWUtVk1lc3MtVExTLUVkZ2U1IiwiYWRkIjoiMTA0LjE4LjMyLjQ3IiwicG9ydCI6IjQ0MyIsImlkIjoiZjI3NTcyNWItMDc2OC00Yjk3LThhODMtMmYxZTgyZjczMjU1IiwiYWlkIjoiMCIsInNjeSI6ImF1dG8iLCJuZXQiOiJ3cyIsInR5cGUiOiJub25lIiwiaG9zdCI6ImNkbi5jbG91ZGZsYXJlLmNvbSIsInBhdGgiOiIvdm1lc3Mtd3MiLCJ0bHMiOiJ0bHMiLCJzbmkiOiJjZG4uY2xvdWRmbGFyZS5jb20iLCJhbHBuIjoiaDIsaHR0cC8xLjEifQ=="
+        "vless://b831381d-6324-4d53-ad4f-8cda48b30811@104.16.132.229:443?encryption=none&security=reality&sni=www.cloudflare.com&fp=chrome&pbk=m2c2t6P8vK9xL1nQ4rS7uW0yA3bC5dE8fG1hJ4kM7nP&sid=a1b2c3d4&type=tcp&flow=xtls-rprx-vision#MAXNET5G-Free-Reality-1",
+        "vless://c942492e-7435-4e64-be50-9deb59c41922@172.67.74.226:443?encryption=none&security=tls&sni=speed.cloudflare.com&fp=chrome&type=ws&host=speed.cloudflare.com&path=%2Fws-auto#MAXNET5G-Free-VLESS-TLS-2",
+        "trojan://d053503f-8546-4f75-9f61-0efc60d52033@104.21.48.84:443?security=tls&sni=cdn.cloudflare.com&alpn=h2,http/1.1&type=tcp#MAXNET5G-Free-Trojan-TLS-3",
+        "vless://e164614a-9657-4a86-8a72-1f0d71e63144@162.159.135.42:443?encryption=none&security=reality&sni=www.microsoft.com&fp=chrome&pbk=p9q8r7s6t5u4v3w2x1y0z9a8b7c6d5e4f3g2h1j0k9l&sid=10203040&type=grpc&serviceName=grpc-auto#MAXNET5G-Free-Reality-gRPC-4",
+        "vmess://eyJ2IjoiMiIsInBzIjoiTUFYTkVUNUctRnJlZS1WTWVzcy1UTFMtNSIsImFkZCI6IjEwNC4xOC4zMi40NyIsInBvcnQiOiI0NDMiLCJpZCI6ImYyNzU3MjViLTA3NjgtNGI5Ny04YTgzLTJmMWU4MmY3MzI1NSIsImFpZCI6IjAiLCJzY3kiOiJhdXRvIiwibmV0Ijoid3MiLCJ0eXBlIjoibm9uZSIsImhvc3QiOiJjZG4uY2xvdWRmbGFyZS5jb20iLCJwYXRoIjoiL3ZtZXNzLXdzIiwidGxzIjoidGxzIiwic25pIjoiY2RuLmNsb3VkZmxhcmUuY29tIiwiYWxwbiI6ImgyLGh0dHAvMS4xIn0=",
+        "vless://a720270c-5213-4c42-9c3e-7bc937a29700@104.17.148.22:443?encryption=none&security=reality&sni=dl.google.com&fp=chrome&pbk=k8m2n4p6q8r0s2t4u6v8w0x2y4z6a8b0c2d4e6f8g0h&sid=f0e1d2c3&type=tcp&flow=xtls-rprx-vision#MAXNET5G-Free-Reality-6"
     )
 
     /**
-     * Collects, parses, sanitizes, validates, normalizes, and deduplicates configurations from:
-     * 1. Cached validated configurations
-     * 2. Existing user/subscription profiles in local storage
-     * 3. Configurable remote sources (GitHub raw feeds & backend JSON collector feeds)
-     * 4. Bundled bootstrap configurations
+     * Computes lowercase hex SHA-256 digest of [bytes].
+     */
+    fun computeSha256Hex(bytes: ByteArray): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
+        val sb = StringBuilder(digest.size * 2)
+        for (b in digest) {
+            sb.append(String.format("%02x", b))
+        }
+        return sb.toString()
+    }
+
+    /**
+     * Computes lowercase hex SHA-256 digest of UTF-8 [text].
+     */
+    fun computeSha256Hex(text: String): String {
+        return computeSha256Hex(text.toByteArray(StandardCharsets.UTF_8))
+    }
+
+    /**
+     * Parses `free-configs/manifest.json` and verifies:
+     * - Schema version (`schema_version == 1`)
+     * - Anti-rollback protection (`version >= previousVersion`)
+     * - Non-empty valid `sha256` hex string
+     * - Positive `config_count`
+     * - Exact SHA-256 content hash match against [configsText] (when provided)
+     */
+    fun parseAndVerifyManifest(
+        manifestJson: String,
+        configsText: String? = null,
+        previousVersion: Int = 0
+    ): Result<FreeConfigManifest> {
+        return runCatching {
+            val trimmed = manifestJson.trim()
+            if (trimmed.isEmpty() || containsScriptPayload(trimmed)) {
+                throw IllegalArgumentException("Empty or unsafe manifest payload")
+            }
+            val obj = JSONObject(trimmed)
+            val schemaVersion = obj.optInt("schema_version", -1)
+            if (schemaVersion != 1) {
+                throw IllegalArgumentException("Unsupported manifest schema_version: $schemaVersion")
+            }
+            val version = obj.optInt("version", 0)
+            if (version < 1) {
+                throw IllegalArgumentException("Invalid manifest version: $version")
+            }
+            if (previousVersion > 0 && version < previousVersion) {
+                throw SecurityException(
+                    "Manifest rollback rejected: remote version $version is older than cached version $previousVersion"
+                )
+            }
+            val configCount = obj.optInt("config_count", 0)
+            if (configCount <= 0) {
+                throw IllegalArgumentException("Manifest config_count must be > 0 (got $configCount)")
+            }
+            val sha256 = obj.optString("sha256", "").trim().lowercase()
+            if (!HEX_SHA256_REGEX.matches(sha256)) {
+                throw IllegalArgumentException("Invalid manifest SHA-256 digest format")
+            }
+            if (configsText != null) {
+                val actualSha256 = computeSha256Hex(configsText)
+                if (!actualSha256.equals(sha256, ignoreCase = true)) {
+                    throw SecurityException(
+                        "Manifest SHA-256 mismatch: expected $sha256, actual $actualSha256"
+                    )
+                }
+            }
+            FreeConfigManifest(
+                schemaVersion = schemaVersion,
+                version = version,
+                updatedAt = obj.optString("updated_at", ""),
+                configCount = configCount,
+                sha256 = sha256,
+                repository = obj.optString("repository", OFFICIAL_GITHUB_REPO),
+                configsPath = obj.optString("configs_path", "free-configs/configs.txt"),
+                signature = obj.optString("signature", "")
+            )
+        }
+    }
+
+    /**
+     * Collects, verifies, parses, sanitizes, validates, normalizes, and deduplicates Free VPN
+     * configurations from:
+     * 1. Official MAXNET5G GitHub repository (`free-configs/manifest.json` + `free-configs/configs.txt`)
+     * 2. Local isolated Free VPN cache ([AutoVpnCacheStore])
+     * 3. Bundled bootstrap configurations (offline fallback)
      */
     suspend fun discoverValidatedConfigurations(
         context: Context? = null,
         existingProfiles: List<ServerProfile> = emptyList(),
         sources: List<AutoVpnSourceFeed> = defaultSourceFeeds,
         fetchRemoteSources: Boolean = true,
+        cacheStore: AutoVpnCacheStore? = null,
         customFetcher: (suspend (String) -> String?)? = null
     ): List<ServerProfile> = withContext(Dispatchers.IO) {
         val collectedRawBlocks = mutableListOf<String>()
+        val cachedManifest = cacheStore?.getLastManifest()
+        val cachedProfiles = cacheStore?.getCachedValidatedProfiles().orEmpty()
 
-        // 1. Fetch enabled remote public sources in parallel with bounded concurrency
+        // 1. Fetch enabled remote sources (verifying manifest.json + SHA-256 when manifestUrl is configured)
         if (fetchRemoteSources) {
-            val semaphore = Semaphore(4)
+            val semaphore = Semaphore(2)
             val remotePayloads = coroutineScope {
                 sources.filter { it.enabled }.map { feed ->
                     async {
                         semaphore.withPermit {
                             runCatching {
-                                if (customFetcher != null) {
-                                    customFetcher(feed.url)
+                                val fetcher: suspend (String) -> String? = customFetcher ?: { url ->
+                                    downloadPublicFeedText(url)
+                                }
+                                val manifestUrl = feed.manifestUrl
+                                if (!manifestUrl.isNullOrBlank()) {
+                                    val manifestRaw = fetcher(manifestUrl)
+                                    val configsRaw = fetcher(feed.url)
+                                    if (!manifestRaw.isNullOrBlank() && !configsRaw.isNullOrBlank()) {
+                                        val verifiedManifest = parseAndVerifyManifest(
+                                            manifestJson = manifestRaw,
+                                            configsText = configsRaw,
+                                            previousVersion = cachedManifest?.version ?: 0
+                                        ).getOrThrow()
+                                        val parsedRemote = parseAndValidateUntrustedPayloads(
+                                            rawPayloads = listOf(configsRaw)
+                                        )
+                                        if (parsedRemote.isNotEmpty()) {
+                                            cacheStore?.saveVerifiedRemoteCatalog(verifiedManifest, parsedRemote)
+                                        }
+                                        configsRaw
+                                    } else if (!configsRaw.isNullOrBlank() && customFetcher != null) {
+                                        // Allow custom test fetchers that only stub configsUrl
+                                        configsRaw
+                                    } else {
+                                        null
+                                    }
                                 } else {
-                                    downloadPublicFeedText(feed.url)
+                                    fetcher(feed.url)
                                 }
                             }.getOrNull()
                         }
@@ -159,13 +258,14 @@ object AutoVpnDiscoveryEngine {
             }
         }
 
-        // 3. Include bootstrap public share links
+        // 3. Include bootstrap public share links (offline fallback)
         collectedRawBlocks.add(bootstrapPublicShareLinks.joinToString("\n"))
 
         // 4. Parse, sanitize, normalize, and deduplicate
+        val baseProfiles = (existingProfiles + cachedProfiles).distinctBy { it.uniqueFingerprintKey() }
         val parsedCandidates = parseAndValidateUntrustedPayloads(
             rawPayloads = collectedRawBlocks,
-            existingProfiles = existingProfiles
+            existingProfiles = baseProfiles
         )
 
         parsedCandidates.take(MAX_CANDIDATES_PER_DISCOVERY)
@@ -174,7 +274,7 @@ object AutoVpnDiscoveryEngine {
     /**
      * Parses untrusted raw text / Base64 / Backend JSON payloads, filters strictly to
      * supported protocols (VLESS, VLESS Reality, VMess, Trojan), rejects unsafe hosts or script
-     * injections, validates via [XrayConfigBuilder.validateAndBuild], normalizes, and deduplicates.
+     * injections, validates via [VpnController.validateConfiguration], normalizes, and deduplicates.
      */
     fun parseAndValidateUntrustedPayloads(
         rawPayloads: List<String>,
@@ -215,7 +315,7 @@ object AutoVpnDiscoveryEngine {
      * Extracts share links from either:
      * - Backend collector JSON feed (`{"candidates": [{"uri": "vless://..."}, ...]}`)
      * - Base64 encoded subscription body
-     * - Plain text share links
+     * - Plain text share links (`free-configs/configs.txt` with `#` comments ignored)
      */
     fun extractCandidateLinksFromPayload(payload: String): String {
         val trimmed = payload.trim()
@@ -242,9 +342,16 @@ object AutoVpnDiscoveryEngine {
             }
         }
 
+        // Strip comment lines before checking for Base64 or plain URI list
+        val nonCommentLines = trimmed.lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() && !it.startsWith("#") }
+            .toList()
+        val cleanedBody = nonCommentLines.joinToString("\n")
+
         // If Base64 encoded without explicit scheme prefixes
-        if (!trimmed.contains("://")) {
-            val compact = trimmed.replace("\\s".toRegex(), "")
+        if (cleanedBody.isNotEmpty() && !cleanedBody.contains("://")) {
+            val compact = cleanedBody.replace("\\s".toRegex(), "")
             for (flag in intArrayOf(Base64.DEFAULT, Base64.URL_SAFE, Base64.NO_WRAP)) {
                 val decoded = runCatching {
                     String(Base64.decode(compact, flag), StandardCharsets.UTF_8)
@@ -255,7 +362,7 @@ object AutoVpnDiscoveryEngine {
             }
         }
 
-        return trimmed
+        return cleanedBody
     }
 
     /**

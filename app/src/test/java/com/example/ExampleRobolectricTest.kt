@@ -285,12 +285,14 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("nav_tab_home").performClick()
         composeTestRule.waitForIdle()
 
-        // Verify Home screen displays One-Tap Auto Free VPN controls
+        // Verify Home screen displays Dual-Mode Selector (FREE VPN vs MY VPN) and One-Tap Auto Free VPN controls
+        composeTestRule.onNodeWithTag("mode_selector_free_vpn").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("mode_selector_my_vpn").assertIsDisplayed()
         composeTestRule.onNodeWithTag("connect_toggle_button").assertIsDisplayed()
         composeTestRule.onNodeWithTag("selected_server_card").assertIsDisplayed()
         composeTestRule.onNodeWithTag("auto_connection_quality_badge").assertIsDisplayed()
 
-        // Tap Connect with ZERO pre-saved profiles -> must auto-discover, test, rank, select, and connect!
+        // Tap Connect in FREE VPN mode with ZERO personal profiles -> must auto-discover, test, rank, select, and connect!
         composeTestRule.onNodeWithTag("connect_toggle_button").performClick()
         composeTestRule.waitForIdle()
 
@@ -305,18 +307,32 @@ class ExampleRobolectricTest {
             com.example.domain.model.VpnConnectionState.CONNECTED,
             com.example.vpn.VpnController.connectionState.value
         )
+        assertEquals(
+            com.example.core.autovpn.ConnectionOwnership.FREE,
+            com.example.vpn.VpnController.ownershipState.value
+        )
 
-        val autoDiscoveredProfiles = runBlocking { db.maxNetDao().getAllProfilesSnapshot() }
-        assertTrue("Expected Auto Free VPN to automatically discover and persist working candidates", autoDiscoveredProfiles.isNotEmpty())
+        // Verify strict storage isolation: Personal Room database remains completely empty while Free VPN cache holds candidates
+        val personalDbProfiles = runBlocking { db.maxNetDao().getAllProfilesSnapshot() }
+        assertTrue(
+            "Expected Personal Room database to remain completely untouched by Free VPN",
+            personalDbProfiles.isEmpty()
+        )
+        val cachedFreeProfiles = com.example.vpn.VpnController
+            .getOrCreateAutoFreeVpnManager(context)
+            .cacheStore
+            .getCachedValidatedProfiles()
+        assertTrue(
+            "Expected Auto Free VPN cache store to persist validated Free VPN candidates",
+            cachedFreeProfiles.isNotEmpty()
+        )
 
-        // Tap Connect again to disconnect cleanly
-        composeTestRule.onNodeWithTag("connect_toggle_button").performClick()
+        // Switch to MY VPN mode -> must cleanly stop the active Free VPN session and release Free ownership
+        composeTestRule.onNodeWithTag("mode_selector_my_vpn").performClick()
         composeTestRule.waitForIdle()
         composeTestRule.waitUntil(timeoutMillis = 15000) {
-            composeTestRule.onAllNodes(androidx.compose.ui.test.hasTestTag("active_connection_info_card"))
-                .fetchSemanticsNodes()
-                .isEmpty() &&
-                com.example.vpn.VpnController.connectionState.value == com.example.domain.model.VpnConnectionState.DISCONNECTED
+            com.example.vpn.VpnController.connectionState.value == com.example.domain.model.VpnConnectionState.DISCONNECTED &&
+                com.example.vpn.VpnController.ownershipState.value == com.example.core.autovpn.ConnectionOwnership.NONE
         }
     }
 }

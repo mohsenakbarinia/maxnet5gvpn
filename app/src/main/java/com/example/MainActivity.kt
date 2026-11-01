@@ -166,6 +166,9 @@ fun MaxNetAppRoot(viewModel: MaxNetViewModel) {
     val totalProfilesCount by viewModel.totalProfilesCountState.collectAsStateWithLifecycle()
     val availableCountries by viewModel.availableCountriesState.collectAsStateWithLifecycle()
     val activeProfile by viewModel.activeProfileState.collectAsStateWithLifecycle()
+    val personalSelectedProfile by viewModel.personalSelectedProfileState.collectAsStateWithLifecycle()
+    val selectedVpnMode by viewModel.selectedVpnModeState.collectAsStateWithLifecycle()
+    val ownership by viewModel.ownershipState.collectAsStateWithLifecycle()
     val subscriptions by viewModel.subscriptionsState.collectAsStateWithLifecycle()
     val groups by viewModel.groupsState.collectAsStateWithLifecycle()
     val routingRules by viewModel.routingRulesState.collectAsStateWithLifecycle()
@@ -355,12 +358,16 @@ fun MaxNetAppRoot(viewModel: MaxNetViewModel) {
                             HomeScreen(
                                 connectionState = connectionState,
                                 activeProfile = activeProfile,
+                                personalProfile = personalSelectedProfile,
+                                selectedVpnMode = selectedVpnMode,
+                                ownership = ownership,
                                 statistics = statistics,
                                 diagnostics = diagnostics,
                                 qualityReport = qualityReport,
                                 autoVpnStatus = autoVpnStatus,
                                 speedHistory = speedHistory,
                                 settings = settings,
+                                onSwitchVpnMode = viewModel::switchVpnMode,
                                 onToggleConnect = handleConnectToggle,
                                 onTestActiveLatency = { viewModel.testSingleProfileLatency(it) },
                                 onAutoSelectBest = { viewModel.testAllProfilesLatency(autoSelectBest = true) },
@@ -380,7 +387,7 @@ fun MaxNetAppRoot(viewModel: MaxNetViewModel) {
                         MaxNetDestination.PROFILES -> {
                             ProfilesScreen(
                                 profiles = profiles,
-                                activeProfileId = activeProfile?.id,
+                                activeProfileId = personalSelectedProfile?.id,
                                 groups = groups,
                                 searchQuery = searchQuery,
                                 selectedProtocol = protocolFilter,
@@ -406,6 +413,7 @@ fun MaxNetAppRoot(viewModel: MaxNetViewModel) {
                                 onSortModeChange = viewModel::setSortMode,
                                 onSelectProfile = viewModel::selectProfile,
                                 onConnectToProfile = { targetProfile ->
+                                    viewModel.switchVpnMode(com.example.core.autovpn.VpnAppMode.MY_VPN)
                                     viewModel.selectProfile(targetProfile.id)
                                     val activeStates = setOf(
                                         VpnConnectionState.PREPARING,

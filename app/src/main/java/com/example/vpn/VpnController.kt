@@ -4,6 +4,8 @@ import android.content.Context
 import com.example.core.CoreEngine
 import com.example.core.autovpn.AutoFreeVpnManager
 import com.example.core.autovpn.AutoVpnCacheStore
+import com.example.core.autovpn.ConnectionOwnership
+import com.example.core.autovpn.VpnAppMode
 import com.example.core.singbox.SingBoxCoreAdapter
 import com.example.core.xray.XrayCoreAdapter
 import com.example.core.xray.XrayNativeBridge
@@ -31,7 +33,8 @@ import kotlinx.coroutines.launch
  * Coordinates the Dual-Engine adapters (Xray-core v26.10.29 & sing-box), TUN-to-SOCKS5
  * native packet forwarding (`libhev-socks5-tunnel.so`), 9-stage connection state machine,
  * end-to-end HTTP 204 proxy verification, 60-second real traffic history,
- * exponential-backoff reconnection, and the Intelligent Auto Free VPN Manager.
+ * exponential-backoff reconnection, Single-Engine Connection Ownership (`NONE` / `FREE` / `PERSONAL`),
+ * and the Intelligent Auto Free VPN Manager.
  */
 object VpnController {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -61,7 +64,19 @@ object VpnController {
 
     fun resetAutoFreeVpnManagerForTests() {
         _autoFreeVpnManager?.resetState()
+        _ownershipState.value = ConnectionOwnership.NONE
+        _activeFreeProfile.value = null
+        _selectedVpnMode.value = VpnAppMode.FREE_VPN
     }
+
+    private val _selectedVpnMode = MutableStateFlow(VpnAppMode.FREE_VPN)
+    val selectedVpnMode: StateFlow<VpnAppMode> = _selectedVpnMode.asStateFlow()
+
+    private val _ownershipState = MutableStateFlow(ConnectionOwnership.NONE)
+    val ownershipState: StateFlow<ConnectionOwnership> = _ownershipState.asStateFlow()
+
+    private val _activeFreeProfile = MutableStateFlow<ServerProfile?>(null)
+    val activeFreeProfile: StateFlow<ServerProfile?> = _activeFreeProfile.asStateFlow()
 
     private val _connectionState = MutableStateFlow(VpnConnectionState.DISCONNECTED)
     val connectionState: StateFlow<VpnConnectionState> = _connectionState.asStateFlow()
@@ -86,6 +101,41 @@ object VpnController {
     private var tunForwarderRunning: Boolean = false
     private var lastVerifiedProxyLatencyMs: Long? = null
     private var activeVerificationUrl: String? = null
+
+    fun setSelectedVpnMode(mode: VpnAppMode) {
+        _selectedVpnMode.value = mode
+    }
+
+    fun setActiveFreeProfile(profile: ServerProfile?) {
+        _activeFreeProfile.value = profile
+    }
+
+    /**
+     * Switches between [VpnAppMode.FREE_VPN] and [VpnAppMode.MY_VPN].
+     * Enforces single-engine connection ownership:
+     * - When switching from Free VPN to My VPN: stops Free VPN cleanly and releases active Free configuration.
+     * - When switching from My VPN to Free VPN: stops Personal VPN cleanly while keeping Personal database untouched.
+     */
+    suspend fun switchMode(
+        newMode: VpnAppMode,
+        onLog: (String, String, String) -> Unit = { _, _, _ -> }
+    ) {
+        val previousMode = _selectedVpnMode.value
+        _selectedVpnMode.value = newMode
+        val currentOwner = _ownershipState.value
+
+        if (newMode == VpnAppMode.MY_VPN && currentOwner == ConnectionOwnership.FREE) {
+            onLog("INFO", "VpnController", "Switching from FREE VPN to MY VPN: stopping active Free VPN session cleanly")
+            _autoFreeVpnManager?.stopContinuousOptimizationAndResetToIdle()
+            stopSession(onLog)
+            _activeFreeProfile.value = null
+        } else if (newMode == VpnAppMode.FREE_VPN && currentOwner == ConnectionOwnership.PERSONAL) {
+            onLog("INFO", "VpnController", "Switching from MY VPN to FREE VPN: stopping active Personal VPN session cleanly")
+            stopSession(onLog)
+        } else if (previousMode != newMode && _connectionState.value != VpnConnectionState.DISCONNECTED) {
+            stopSession(onLog)
+        }
+    }
 
     fun getEngine(type: EngineType): CoreEngine {
         return when (type) {
@@ -116,6 +166,11 @@ object VpnController {
         profile: ServerProfile,
         settings: AppSettings,
         rules: List<RoutingRuleItem>,
+        ownership: ConnectionOwnership = if (profile.id < 0L || profile.groupName == AutoVpnCacheStore.AUTO_CACHE_GROUP) {
+            ConnectionOwnership.FREE
+        } else {
+            ConnectionOwnership.PERSONAL
+        },
         establishTunAndForwarder: suspend (Int) -> Boolean = { true },
         protectSocket: (Int) -> Boolean = { true },
         verifyConnectivity: Boolean = true,
@@ -125,6 +180,14 @@ object VpnController {
     ): Result<Int> {
         healthMonitorJob?.cancel()
         statsCollectorJob?.cancel()
+
+        // Ensure any previously running session is stopped before starting a new one
+        if (_connectionState.value != VpnConnectionState.DISCONNECTED &&
+            _connectionState.value != VpnConnectionState.PREPARING
+        ) {
+            TProxyService.stopTun2Socks()
+            currentEngine.stop()
+        }
 
         val selectedEngine = getEngine(settings.activeEngine)
         currentEngine = selectedEngine
@@ -137,6 +200,13 @@ object VpnController {
         lastVerifiedProxyLatencyMs = null
         activeVerificationUrl = verificationUrl
 
+        _ownershipState.value = ownership
+        if (ownership == ConnectionOwnership.FREE) {
+            _activeFreeProfile.value = profile
+        } else {
+            _activeFreeProfile.value = null
+        }
+
         setState(VpnConnectionState.PREPARING, onStateChanged)
         updateDiagnosticSnapshot(localPort = null, lastError = null)
 
@@ -146,6 +216,7 @@ object VpnController {
                 rawError = preValidation.errors.joinToString("; "),
                 languageCode = settings.languageCode
             )
+            _ownershipState.value = ConnectionOwnership.NONE
             setState(VpnConnectionState.ERROR, onStateChanged)
             onLog("ERROR", "VpnController", "Configuration invalid: $friendly")
             updateDiagnosticSnapshot(localPort = null, lastError = friendly)
@@ -156,6 +227,7 @@ object VpnController {
         if (initRes.isFailure) {
             val rawMsg = initRes.exceptionOrNull()?.message ?: "Failed to initialize Xray-core assets"
             val friendly = formatUserFriendlyError(rawMsg, settings.languageCode)
+            _ownershipState.value = ConnectionOwnership.NONE
             setState(VpnConnectionState.ERROR, onStateChanged)
             onLog("ERROR", "VpnController", friendly)
             updateDiagnosticSnapshot(localPort = null, lastError = friendly)
@@ -176,6 +248,7 @@ object VpnController {
         if (startResult.isFailure) {
             val err = startResult.exceptionOrNull() ?: IllegalStateException("Engine failed to start")
             val friendly = formatUserFriendlyError(err.message ?: "Engine start failed", settings.languageCode)
+            _ownershipState.value = ConnectionOwnership.NONE
             setState(VpnConnectionState.ERROR, onStateChanged)
             onLog("ERROR", "VpnController", "Engine start failed: $friendly")
             updateDiagnosticSnapshot(localPort = null, lastError = friendly)
@@ -197,6 +270,7 @@ object VpnController {
 
         if (!tunReady) {
             selectedEngine.stop()
+            _ownershipState.value = ConnectionOwnership.NONE
             val friendly = formatUserFriendlyError(
                 "TUN interface or packet forwarder failed to initialize",
                 settings.languageCode
@@ -229,6 +303,7 @@ object VpnController {
                 selectedEngine.stop()
                 tunEstablished = false
                 tunForwarderRunning = false
+                _ownershipState.value = ConnectionOwnership.NONE
                 setState(VpnConnectionState.ERROR, onStateChanged)
                 updateDiagnosticSnapshot(localPort = null, lastError = friendly)
                 return Result.failure(IllegalStateException(friendly, verifyRes.exceptionOrNull()))
@@ -244,11 +319,14 @@ object VpnController {
 
         // Stage: CONNECTED (all checks passed!)
         selectedEngine.markConnected()
+        if (ownership == ConnectionOwnership.FREE && lastVerifiedProxyLatencyMs != null) {
+            _activeFreeProfile.value = profile.copy(lastLatencyMs = lastVerifiedProxyLatencyMs)
+        }
         setState(VpnConnectionState.CONNECTED, onStateChanged)
         onLog(
             "INFO",
             "VpnController",
-            "Connected '${profile.remarks}' via ${selectedEngine.getEngineVersion()} on 127.0.0.1:$localPort"
+            "Connected '${profile.remarks}' [${ownership.name}] via ${selectedEngine.getEngineVersion()} on 127.0.0.1:$localPort"
         )
         observeEngineTelemetry(selectedEngine)
         startHealthMonitor(selectedEngine, localPort, onLog)
@@ -268,10 +346,14 @@ object VpnController {
         statsCollectorJob?.cancel()
         _speedHistory.value = emptyList()
         statsCollectorJob = scope.launch {
+            val rollingDeque = ArrayDeque<Pair<Long, Long>>(60)
             engine.getStatistics().collect { stat ->
                 _statistics.value = stat
-                val updatedHistory = (_speedHistory.value + (stat.uploadSpeedBps to stat.downloadSpeedBps)).takeLast(60)
-                _speedHistory.value = updatedHistory
+                if (rollingDeque.size >= 60) {
+                    rollingDeque.removeFirst()
+                }
+                rollingDeque.addLast(stat.uploadSpeedBps to stat.downloadSpeedBps)
+                _speedHistory.value = rollingDeque.toList()
             }
         }
     }
@@ -300,6 +382,7 @@ object VpnController {
                         engine.stop()
                         tunEstablished = false
                         tunForwarderRunning = false
+                        _ownershipState.value = ConnectionOwnership.NONE
                         _connectionState.value = VpnConnectionState.ERROR
                         updateDiagnosticSnapshot(localPort = null, lastError = msg)
                     }
@@ -310,7 +393,9 @@ object VpnController {
     }
 
     suspend fun stopSession(onLog: (String, String, String) -> Unit = { _, _, _ -> }) {
-        if (_connectionState.value == VpnConnectionState.DISCONNECTED) return
+        if (_connectionState.value == VpnConnectionState.DISCONNECTED &&
+            _ownershipState.value == ConnectionOwnership.NONE
+        ) return
         _connectionState.value = VpnConnectionState.STOPPING
         updateDiagnosticSnapshot(localPort = _statistics.value.localSocksPort, lastError = null)
 
@@ -325,6 +410,8 @@ object VpnController {
         tunEstablished = false
         tunForwarderRunning = false
         lastVerifiedProxyLatencyMs = null
+        _ownershipState.value = ConnectionOwnership.NONE
+        _activeFreeProfile.value = null
         _connectionState.value = VpnConnectionState.DISCONNECTED
         _statistics.value = EngineStatistics()
         _speedHistory.value = emptyList()
@@ -394,6 +481,7 @@ object VpnController {
         currentEngine.stop()
         tunEstablished = false
         tunForwarderRunning = false
+        _ownershipState.value = ConnectionOwnership.NONE
         val failMsg = formatUserFriendlyError(
             "Failed to reconnect after ${backoffDelaysMs.size} attempts",
             activeSettings.languageCode

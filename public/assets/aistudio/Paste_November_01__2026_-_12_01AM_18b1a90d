@@ -1,0 +1,660 @@
+# MAXNET5G - SMART AUTO FREE VPN SYSTEM
+# FULL IMPLEMENTATION PROMPT (Android app + free config pipeline)
+
+## 0. ROLE AND OPERATING RULES
+
+You are one engineer wearing three hats:
+1. Senior Android engineer (Kotlin/Java, VpnService, Xray-core integration, coroutines/Flow).
+2. Network and security engineer (proxy protocols, TLS/Reality, threat modeling of untrusted input).
+3. CI/CD and Python tooling engineer (GitHub Actions, data pipelines, code signing).
+
+You work directly inside the existing MAXNET5G repository. You must produce real, compiling, working
+code that you build, run and verify. Pseudo-code, placeholders, TODO stubs, mocked servers and
+simulated test results are not acceptable anywhere.
+
+Rules for the whole task:
+- Work in the phases below, in order. Phase 0 (audit) is mandatory and comes before any code.
+- Extend the existing architecture. Do NOT rebuild, re-architect or rename existing components.
+- Make the smallest change set that cleanly delivers the feature. Do not touch unrelated files.
+- Never remove, rename or alter the behavior of existing features: subscriptions, manual configs,
+  profile lists, existing ping/delay tests, routing, DNS, per-app settings, notifications, tiles.
+- If something is ambiguous, pick the most conservative option consistent with this document, record
+  the assumption in the final report, and continue. Ask the owner only if you are truly blocked
+  (for example the project cannot be built at all).
+- Never say something works unless you actually ran it. If you cannot run it (no network, no
+  emulator/device, no signing key), say so explicitly and describe exactly what you did instead.
+- Match the project's language, code style, architecture pattern, DI approach, UI toolkit, naming,
+  localization and logging conventions. Code and comments in English.
+- Add a dependency only if truly necessary; justify each one in the final report (purpose, license,
+  APK size impact, maintenance status). Prefer what the project already uses.
+- Never put secrets, tokens, private keys or full server configs in the repo, the APK, logs or CI output.
+- Never invent URLs, repository names, keys or endpoints. Derive them from the repo (`git remote -v`)
+  or make them configurable (section 6.1).
+
+## 1. PRODUCT GOAL
+
+Upgrade the existing MAXNET5G Android app with a smart, fully automatic "Free VPN" feature.
+
+The user opens the app, taps ONE button, and the app automatically:
+1. Retrieves a fresh list of public free VLESS / VMess / Trojan (including Reality) configurations.
+2. Tests them on the user's own device with the existing Xray core.
+3. Ranks them by real measured performance (never by country or location).
+4. Connects through the best working one using the existing VPN engine.
+5. Keeps the connection alive: automatic failover to the next best server and automatic reconnection.
+
+The user never sees or chooses servers, countries, protocols or configurations.
+
+Acceptance narrative (the feature is done only when all of this is true on a real device):
+- Fresh install with network: tap Connect -> connected within the target time (section 14) -> exit IP
+  differs from the direct IP -> other apps' traffic flows through the tunnel.
+- The chosen server is made unreachable while connected -> the app notices and moves to another server
+  by itself within the failover budget.
+- Airplane mode on/off or Wi-Fi <-> mobile data switch -> the app recovers by itself and does NOT
+  switch servers needlessly.
+- App started offline but a cache exists -> Connect still works from the cache.
+- Every existing feature behaves exactly as before.
+
+## 2. NON-NEGOTIABLE CONSTRAINTS
+
+- Reuse the existing Xray core and the existing VPN connection engine. No second core, no second
+  VpnService.
+- Preserve all existing functionality. Subscription and manual configuration features stay unchanged.
+- No purchased or self-maintained VPN servers and no backend you must operate. Collection and updates
+  run on GitHub Actions and free hosting (GitHub Pages / raw / CDN mirrors).
+- Public configs are untrusted data. Validate them before use, and rebuild every config into an Xray
+  config with our own typed code from whitelisted fields (never raw JSON passthrough, never string
+  templates).
+- Cache validated configs on the device to minimize network requests.
+- Real functionality only: real fetching, real Xray-based testing, real connection, real failover.
+- The UI has no server list, no country picker, no protocol picker, no config text.
+- No new analytics, ads or tracking. No new permissions unless strictly required (justify any).
+
+## 3. PHASE 0 - DISCOVERY AND AUDIT (MANDATORY, BEFORE WRITING CODE)
+
+Inspect the repository and answer every item from the actual code (cite file paths and class names):
+1. Stack and build: languages (Kotlin/Java/Flutter/React Native/other), modules, Gradle/AGP/Kotlin
+   versions, minSdk/targetSdk/compileSdk, ABIs, R8/ProGuard rules, signing setup, existing
+   `.github/workflows`. Run the existing build and unit tests FIRST and record the baseline
+   (pass/fail, warnings).
+2. Xray integration: how the core is bundled (AAR / JNI .so / binary), its version, which APIs are
+   exposed (start/stop, config validation, outbound delay measurement, stats query, socket-protect
+   callback), and which transports/security types it supports (Reality, xhttp, httpupgrade, gRPC,
+   ws, h2, flow vision, newer VLESS encryption, ...).
+3. Config generation: which classes build the Xray JSON from a profile; where routing, DNS, sniffing,
+   mux, fragment, IPv6 and LAN-bypass settings come from; how a profile is modeled.
+4. VPN engine: the VpnService subclass; TUN setup (routes, DNS, MTU, IPv6); the TUN-to-proxy bridge
+   (tun2socks / hev-socks5-tunnel / Xray tun inbound); foreground service and notification; process
+   model (separate process? how does the UI talk to the service: broadcast/Messenger/AIDL/StateFlow);
+   how connect/disconnect/restart are triggered; how state is published; always-on/lockdown handling;
+   per-app routing; whether the app's OWN HTTP traffic goes through the tunnel or bypasses it; how
+   sockets are protected from looping back into the TUN.
+5. Profiles and subscriptions: data model, storage (Room/MMKV/DataStore/SharedPreferences), URI
+   parsers (vless/vmess/trojan/...), subscription fetching/decoding, validation, and how the
+   "selected profile" is persisted.
+6. Existing delay/ping code: how "real delay" is measured (for example an outbound-delay API with a
+   generate_204 URL), both for a stopped profile and for the currently running connection. You must
+   reuse this.
+7. App shell: navigation, main screen, theming, localization (which languages, RTL), string resources,
+   DI, background work (WorkManager or other), HTTP client, JSON library, logging, existing tests.
+8. Conflicts: singletons holding a "current profile", assumptions that every active connection comes
+   from a saved profile, anything else this feature could break.
+
+Output of Phase 0 (put it in your response before coding):
+- Architecture report (compact): how connect/disconnect works end to end today, with file/class refs.
+- Reuse map: for each capability this feature needs, the existing class/function you will reuse, or "new".
+- Planned change list: every file you will add or modify, one line of purpose each.
+- Assumptions and risks.
+If the project is not a plain native Android app (Flutter, React Native, ...), adapt the plan to its
+native bridge without changing the architecture below.
+
+## 4. TARGET ARCHITECTURE (OVERVIEW)
+
+Part A - Config pipeline (GitHub Actions, no servers):
+  sources -> fetch -> parse -> normalize -> dedupe -> static validation -> liveness test -> real Xray
+  test -> rank -> signed manifest -> publish to several free mirrors.
+Part B - Android data layer `FreeConfigRepository`:
+  race mirrors -> verify signature -> validate -> atomic cache (+ bundled seed fallback) -> refresh.
+Part C - Android on-device testing `ServerProber` + `ServerRanker`:
+  candidate selection -> cheap reachability pre-check -> real Xray test -> score -> failover queue.
+Part D - Android orchestration `FreeVpnOrchestrator` (state machine) + `ConnectionMonitor`:
+  connect, verify, failover, reconnect, network-change handling, anti-flapping.
+Part E - Engine integration `FreeVpnEngineAdapter`:
+  turns the chosen server into an EPHEMERAL profile and drives the existing engine.
+Part F - UI: a minimal "Free VPN" section observing orchestrator state.
+
+Put all new Android code in a dedicated package (for example `<app package>.freevpn`) with
+sub-packages `data`, `probe`, `core`, `engine`, `ui`. Keep the public surface small and testable:
+hide HTTP, clock, probe engine and VPN engine behind interfaces so everything can be unit-tested
+with fakes.
+
+## 5. PART A - CONFIG COLLECTION PIPELINE (GitHub Actions + free hosting)
+
+### 5.1 Layout and hosting
+- Create a self-contained directory `free-config-pipeline/` (Python 3.11+, pinned requirements,
+  `src/free_config_pipeline/`, `tests/`, `testdata/`, `sources.yml`, `manifest.schema.json`,
+  `canary.txt`, `README.md`) so it can later move into its own repository unchanged.
+- Workflow file: `.github/workflows/free-configs.yml`.
+- Free publishing targets:
+  a) GitHub Pages through `actions/deploy-pages` (primary; does not grow repo history).
+  b) An orphan data branch (for example `free-configs-data`) replaced with ONE force-pushed commit
+     per run; it also serves raw.githubusercontent.com and jsDelivr mirrors.
+  c) Optional extra mirror (Cloudflare Pages / GitLab Pages) as a step that is skipped when its
+     secrets are absent.
+- If a jsDelivr mirror is used, call its cache-purge endpoint after publishing (branch refs are
+  cached for hours). Check official docs for current GitHub Pages / jsDelivr behavior and limits.
+
+### 5.2 Sources
+- `sources.yml` entries: `name`, `url`, `format` (`uri_list` | `base64` | `clash_yaml` |
+  `singbox_json`), `enabled`, `max_bytes`, `notes`.
+- Include only sources you verified are live and publicly intended for consumption (plain raw lists,
+  subscription endpoints, public GitHub repos). Prefer several independent sources. If you cannot
+  verify sources (no network), ship the structure plus `sources.example.yml` and tell the owner to
+  fill it in. Never fabricate URLs.
+- Do NOT scrape sites that need login, bypass anti-bot protection, or require brittle HTML scraping
+  (for example Telegram web previews).
+- Fetching: HTTPS only, max 3 redirects, connect timeout 10 s, total timeout 30 s, up to 3 retries
+  with exponential backoff, per-source size cap (default 10 MB, enforced while streaming), neutral
+  User-Agent, respect rate limits and each source's terms. One failing source must never fail a run.
+- Record per source: fetched / parsed / valid / working counts and error reasons in a non-secret
+  `report.json`. Attribute sources in the README.
+- The Android app never downloads third-party source lists directly; it only consumes our signed
+  manifest.
+
+### 5.3 Parsing and normalization
+- Supported: `vless://`, `vmess://` (base64 JSON), `trojan://`, including `security=reality`, XTLS
+  Vision flow, and the transports supported by the bundled core (Phase 0): tcp, ws, grpc,
+  httpupgrade, xhttp, h2. Other schemes (ss://, hysteria2://, tuic://, wireguard://) are counted as
+  unsupported and skipped.
+- Tolerate real-world quirks: URL-encoded values, missing base64 padding, uppercase schemes, CRLF and
+  trailing whitespace, IPv6 literals in brackets, emoji/RTL text in fragments, alternative parameter
+  names (`sni`/`peer`, `allowInsecure`/`insecure`), numbers given as strings in vmess JSON, WS paths
+  with `?ed=2048`, gRPC `serviceName`/`mode`, comma-separated `alpn`.
+- Malformed or unsupported entries go into a rejection-reason histogram and are skipped. The parser
+  must never crash on any input (fuzz it).
+- Normalize into one typed model: protocol, host, port, credential (uuid/password), flow, encryption,
+  network, security, sni, alpn, fingerprint, reality public key / short id / spider path, host
+  header, path, gRPC service/mode. Discard the original remark.
+- Canonical ID: SHA-256 over an ordered serialization of ONLY connection-relevant fields
+  (lowercased/punycoded host, port, credential, flow, network, security, sni, host header, path,
+  service name, pbk, sid, fp, sorted alpn). Remarks never influence it. Use it to deduplicate across
+  all sources. `id` = first 16 hex chars.
+- Diversity cap: at most 3 configs per (host, port).
+
+### 5.4 Static validation (drop on any failure)
+- Host: valid RFC 1123 hostname (<= 253 chars, labels <= 63) or IP literal. Reject loopback,
+  private (RFC 1918), link-local (including 169.254.0.0/16), CGNAT (100.64.0.0/10), multicast,
+  unspecified, reserved/documentation ranges, IPv4-mapped IPv6 of those, `localhost`, `.local`,
+  `.internal`, `.lan`, `.home.arpa`. In the pipeline, also reject hostnames that RESOLVE into those
+  ranges (prevents LAN pivoting and probing the CI runner's internal network).
+- Port 1..65535.
+- Credentials: VLESS/VMess id must be a valid UUID; Trojan password 1..256 printable chars.
+  VMess: alterId must be 0 and `scy` must not be `none`/`zero`. VLESS `encryption` must be `none`
+  unless Phase 0 shows the bundled core and generator support more.
+- Security policy (configurable; defaults shown):
+  - Allowed: `tls`, `reality`. Reject VLESS with `security=none`; reject Trojan without TLS/Reality.
+  - Reject `allowInsecure=true` (flag `ALLOW_INSECURE_TLS=false`).
+  - Reality requires: `pbk` (base64url x25519 public key, 43 chars), non-empty valid `sni`, `fp` from
+    the set the bundled core accepts (chrome, firefox, safari, ios, android, edge, 360, qq, random,
+    randomized...), optional `sid` (even-length hex, <= 16 chars), optional `spx` (<= 64 chars),
+    `flow` empty or `xtls-rprx-vision`.
+  - TLS: `sni` defaults to host when host is a domain; `alpn` subset of {h2, http/1.1, h3}; `fp`
+    from the allowed set.
+- Transport whitelist = exactly what the bundled core and the existing config generator support.
+- String hygiene: length caps on every field (path <= 256, sni/host <= 253, service name <= 128);
+  reject control characters (U+0000-U+001F, U+007F); reject non-ASCII hosts (convert IDN to
+  punycode first).
+- Implement these rules in ONE module with shared test vectors in `free-config-pipeline/testdata/`.
+  The Android unit tests must load the same files (Gradle test-resources srcDir pointing there, no
+  duplicated copies) so pipeline and app behave identically.
+
+### 5.5 Testing on the runner
+Goal: a real but coarse pre-filter and a prior for ranking. IMPORTANT: the runner sits in a
+datacenter network. A server that works there may be unreachable from the end user's censored
+network, and vice versa. Thresholds are therefore generous, results are only a prior, and the
+on-device test (Part C) is authoritative.
+- Stage A (cheap, async, high concurrency): DNS resolve + TCP connect (timeout 3 s). Drop failures.
+- Stage B (real): run the official Xray-core release (pinned `XRAY_VERSION`, SHA-256 verified,
+  feature-compatible with the version bundled in the app per Phase 0). Build client configs
+  programmatically with a JSON library (never string templates). Batch: one Xray process per batch
+  (<= 100 configs), each config on its own loopback SOCKS inbound mapped to its own outbound through
+  `inboundTag -> outboundTag` routing. For every config run 3 rounds spaced 5-10 s apart:
+  1. GET `https://www.gstatic.com/generate_204` (expect 204 and empty body; fallback
+     `https://cp.cloudflare.com/generate_204`); measure time to first byte.
+  2. Integrity canary: fetch `canary.txt` from our own Pages site over HTTPS through the proxy and
+     compare its SHA-256 with the expected hash stored in the repo (detects tampering, injection,
+     captive responses). Full TLS certificate verification must succeed through the tunnel. If the
+     canary is not published yet (first run), skip this check and log it.
+  3. Optional small throughput sample (<= 500 KB).
+  Reject on: wrong status/body, canary mismatch, TLS verification failure, success ratio < 2/3,
+  median latency > 3000 ms. Record `latency_ms` (median TTFB), `jitter_ms`, `success_ratio`,
+  `throughput_kbps`.
+- Hard time budget for the whole run (default 25 min); stop gracefully and publish what finished.
+- Persist history across runs on the data branch (`state/history.json`): first_seen, last_seen,
+  last_ok, rolling success bits for the last 48 runs, EWMA latency. Expire a server after 6
+  consecutive failed runs or 48 h without success.
+- Publish ranking: score 0..100 = 100 * (0.45*success_ratio_history + 0.30*latency_score +
+  0.15*stability + 0.10*throughput_score), latency_score = clamp((2000 - latency_ms)/(2000 - 80),
+  0, 1). Keep the top N (default 300) while enforcing diversity: no single (protocol, network,
+  security) class above 50% of the list when alternatives exist. Never rank by geography; do no
+  geo-IP lookups.
+
+### 5.6 Manifest, integrity and signing
+- Publish `manifest.v1.json` and `manifest.v1.json.sig`. Define `manifest.schema.json`; the pipeline
+  validates its own output against it.
+- Manifest fields: `schema` (1), `sequence` (monotonic integer), `generatedAt` (UTC ISO-8601),
+  `validUntil` (generatedAt + 72 h), `keyId`, `pipeline` {version, xrayVersion}, optional `probe`
+  {urls[]} (HTTPS only, <= 5), `servers[]`.
+- Server entry: the normalized connection fields (5.3) + `stats` {latency_ms, jitter_ms,
+  success_ratio, throughput_kbps, age_h, score}.
+- Size limits: <= 300 servers and <= 250 KB uncompressed.
+- Signature: ECDSA P-256 / SHA-256 over the exact raw bytes of the manifest file (DER signature,
+  base64). Java's `SHA256withECDSA` works on every Android API level with no extra dependency; use
+  another scheme only if the repo already ships Tink/BouncyCastle. The private key exists ONLY as
+  the GitHub Actions secret `FREE_CONFIG_SIGNING_KEY`. The app embeds public key(s) (current + next,
+  selected by `keyId`) to allow rotation. Provide `scripts/gen_signing_key.py` and document key
+  generation and rotation in the README.
+- Before publishing, the pipeline verifies its own signature with the public key and re-validates
+  the manifest against the schema.
+
+### 5.7 Workflow requirements
+- Triggers: `schedule` (hourly at an off-peak minute such as 17, never :00), `workflow_dispatch`
+  (inputs: `dry_run`, `publish`), and `pull_request`/`push` for TESTS ONLY (never publish or expose
+  secrets from PRs or forks).
+- Two jobs:
+  1. `collect-and-test`: read-only permissions, NO secrets. Fetches, parses, validates, tests with
+     Xray, uploads a JSON artifact.
+  2. `sign-and-publish`: has the signing secret plus `contents: write`, `pages: write`,
+     `id-token: write`. Treats the artifact as untrusted: re-validates against the schema, signs,
+     verifies, publishes.
+- `concurrency` group so runs never overlap; `timeout-minutes` on every job; minimal `permissions:`
+  per job.
+- Pin every third-party action by full commit SHA; pin Python dependencies; verify the Xray download
+  checksum. Never commit binaries.
+- Safety net: if a run produces fewer than `MIN_SERVERS` (default 20) servers, or the count dropped
+  by more than 70% versus the previous published manifest, do NOT publish; keep the last good
+  manifest and fail the job visibly.
+- Write a Markdown job summary (counts per source, rejection reasons, final count, class
+  distribution). Never print credentials or full configs.
+- Scheduled workflows in public repos are auto-disabled after 60 days without repository activity:
+  add a keep-alive mechanism (for example an API call that re-enables the workflow, or a periodic
+  heartbeat commit on a separate branch). Verify against current GitHub docs, including schedule
+  delays and the shortest allowed interval.
+
+## 6. PART B - ANDROID DATA LAYER (`FreeConfigRepository`)
+
+### 6.1 Endpoints and keys (configuration, not hardcoding)
+- One object `FreeVpnEndpoints` holds the ordered mirror base URLs and the public key(s). Values come
+  from `BuildConfig` fields fed by `gradle.properties`/environment, with defaults derived from
+  `git remote -v` (owner/repo). The build must not break when they are unset; at runtime a missing
+  configuration produces a clear error state ("Free VPN source not configured").
+- Release builds fail closed when no public key is configured. Debug builds may use a test key from
+  `gradle.properties` or an explicit "allow unsigned" debug flag.
+
+### 6.2 Fetching
+- Use the project's existing HTTP client. HTTPS only. No certificate pinning (signature
+  verification protects integrity).
+- Race mirrors: start with the mirror that succeeded most recently; if no response headers arrive
+  within 2 s, start the next one in parallel; the first complete response that passes verification
+  wins and the rest are cancelled. Persist a per-mirror success/failure scoreboard.
+- Conditional requests (ETag / If-None-Match) per mirror. Read at most 1 MB (enforced while
+  streaming). Timeouts: connect 5 s, read 10 s, overall 20 s.
+- Assume heavily filtered networks where github.com / raw.githubusercontent.com may be slow or
+  blocked. That is why several mirrors, the cache and the seed exist.
+- Refresh while disconnected whenever possible. While connected, refresh follows whatever path the
+  app's own traffic normally takes (Phase 0, item 4).
+
+### 6.3 Verification order (strict, fail closed)
+1. Size check.
+2. Signature check on the RAW bytes.
+3. Strict JSON parse (depth <= 8, <= 400 servers).
+4. `schema == 1`; `keyId` known; `sequence` >= cached sequence (reject rollback; equal = no-op);
+   `generatedAt` <= now + 1 day. Age: fresh until `validUntil`; stale (usable only as a last
+   resort) up to 14 days after `generatedAt`; older manifests are ignored. The bundled seed is the
+   exception: always usable as a flagged, low-prior fallback.
+5. Per-server validation with the SAME rules as 5.4 (minus runner-only DNS checks). Invalid servers
+   are dropped individually; if more than 30% are invalid, reject the whole manifest and log it
+   (bug or attack).
+6. Persist atomically.
+
+### 6.4 Cache, seed and local statistics
+- Store in app-private storage excluded from backup/data extraction (`noBackupFilesDir` + backup
+  rules): `manifest.json`, `manifest.sig`, `local_stats.json`. Write to a temp file, then atomic
+  rename. On corruption: delete and fall back to the seed.
+- Seed: a signed `assets/free_seed.json` (+ `.sig`, <= 100 servers) used when no cache exists (first
+  run in a filtered network). Provide a documented manual script `scripts/update-seed`. The Gradle
+  build must NOT need network access. If no seed exists, the app still works.
+- Local per-server statistics (separate from the manifest): last probe time, EWMA success, EWMA
+  latency, EWMA jitter, consecutive failures, quarantine-until, last connected, last failure reason
+  (enum, nothing sensitive). A server absent from the latest verified manifest leaves the working set
+  (its local stats are kept 7 days, then pruned).
+
+### 6.5 Refresh policy (automatic, no user action)
+- Opening the Free VPN screen with a cache older than the soft TTL (3 h): refresh in the background
+  without blocking the UI.
+- On Connect with no usable cache: refresh inside the connect budget (blocking, with timeout), then
+  fall back to the seed.
+- Periodic refresh about every 6 h via WorkManager (or the project's scheduler): network-connected
+  constraint, backoff on failure, unique work, KEEP policy.
+- A refresh never disturbs an active connection and never triggers a server switch by itself.
+
+## 7. PART C - ON-DEVICE TESTING AND RANKING
+
+The pipeline's results are a prior. The device decides.
+
+### 7.1 Candidate selection
+- Working set = cached servers minus quarantined ones. Prior = combination of pipeline `stats.score`
+  and local history.
+- Pick up to 24 candidates per wave: at most 2 per host, at least 2 different (network, security)
+  classes when available, always including the last known good server and the 2 best by local
+  history.
+
+### 7.2 Stage 1 - cheap reachability pre-check
+- System DNS resolve + TCP connect (timeout 2.5 s, concurrency 12). Treat DNS failure, or answers in
+  private/loopback ranges, as failure. Do not work around DNS with hardcoded IPs.
+
+### 7.3 Stage 2 - real Xray test (authoritative)
+- Reuse the existing core's own delay-measurement path found in Phase 0 (for example an
+  outbound-delay API that spins up a temporary instance for one outbound and fetches a URL through
+  it). If none exists, create a short-lived Xray instance per candidate.
+- Never expose an unauthenticated local listener. Prefer in-process measurement. If a loopback
+  inbound is unavoidable: bind 127.0.0.1, random port, random credentials, closed immediately after
+  the probe.
+- Probe: HTTPS GET `https://www.gstatic.com/generate_204` (fallbacks
+  `https://cp.cloudflare.com/generate_204`, then `http://connectivitycheck.gstatic.com/generate_204`),
+  expect status 204 and an empty body, no redirects followed, timeout 6 s. Two samples per
+  candidate: `coldMs` (includes handshake) and `warmMs` (steady state). Availability requires the
+  first sample to succeed. The signed manifest `probe.urls` may override the URLs (HTTPS only;
+  otherwise ignore and use the built-in defaults).
+- Concurrency: default 4 (2 on low-RAM devices via `ActivityManager.isLowRamDevice()`), on a
+  dedicated bounded dispatcher. Every probe instance is torn down in `finally`: no zombie
+  instances, no leaked memory, cancellation-safe.
+- Early exit: stop once >= 3 candidates passed and 1.5 s elapsed since the first pass (or the
+  remaining ones have a much lower prior). Phase budget 12 s; if none passed, run another wave (max
+  3 waves) within the overall connect budget.
+- DESIGN RULE: probing while a tunnel is up needs sockets that bypass the tunnel. Do not probe other
+  candidates while connected unless the existing engine provably protects those sockets. Therefore:
+  test BEFORE connecting; fail over by "try and verify through the live tunnel" using the standby
+  queue (section 8); run a full re-test only after the tunnel has been stopped.
+
+### 7.4 Ranking
+- Score 0..100 = 100 * (0.50*A + 0.30*L + 0.15*T + 0.05*P) - penalties, where
+  A = 0.6*(current probe ok ? 1 : 0) + 0.4*ewmaSuccess (0.5 if no history);
+  L = clamp((1800 - warmMs)/(1800 - 80), 0, 1);
+  T = clamp(1 - jitterMs/400, 0, 1);
+  P = pipeline score/100 (0.5 if absent).
+  Penalties: -15 per recent consecutive failure (cap -45); -5 if the server exists only in the seed.
+- Keep formula and weights in one file (for example `Scoring.kt`), unit-tested and tunable.
+- Output: the best server plus an ordered standby queue of up to 5 servers with distinct hosts,
+  preferring a different (network, security) class than the best.
+- Rank by measured performance only. Never by country, flag or geo-IP.
+
+## 8. PART D - CONNECTION ORCHESTRATOR AND MONITOR
+
+### 8.1 Ownership and threading
+- `FreeVpnOrchestrator` is one state machine with all transitions serialized (single-threaded
+  dispatcher or Mutex), state exposed as `StateFlow`, idempotent commands (double taps are safe),
+  cancellation-safe coroutines, no leaks. It lives in the same process/scope as the VPN service so
+  the session survives the UI going away; the UI is a thin observer.
+- Connection ownership token `FREE | MANUAL | NONE`. Auto-reconnect/failover applies ONLY when the
+  owner is FREE and the user has not asked to disconnect. If the user connects a normal profile
+  while Free VPN is active, stop the free session cleanly and do not fight the manual one. If the
+  user taps Free VPN Connect while a manual connection is active, show one short confirmation
+  ("Switch from the current connection to Free VPN?") and then replace it.
+- Persist `userWantsFreeVpn` so a system restart of the service restores the session; a user
+  disconnect clears it.
+
+### 8.2 States
+Idle -> Preparing -> (Refreshing) -> Testing -> Connecting(server) -> Verifying ->
+Connected(server, ping, quality)
+Connected -> Degraded -> FailingOver -> Connecting ...
+Connected/Degraded -> WaitingForNetwork -> (resume same server) | FailingOver
+Any -> Disconnecting -> Idle. Any -> Error(reason, retryable).
+Reasons (enum): NO_NETWORK, NO_LIST, NO_WORKING_SERVER, VPN_PERMISSION_DENIED, ENGINE_ERROR.
+
+### 8.3 Connect flow
+1. User taps Connect -> request VPN permission through the existing flow (handle denial gracefully).
+2. Load a usable list: cache -> blocking refresh within budget -> seed. Nothing usable ->
+   Error(NO_LIST).
+3. Run Part C. Nothing works after the allowed waves -> Error(NO_WORKING_SERVER) with Retry.
+4. Start the existing engine with the best server (Part E). Verify through the live tunnel within
+   8 s: 2 of 2 probes OK (different endpoints; DNS + HTTPS through the tunnel). Success ->
+   Connected. Failure -> mark the server failed, stop it, try the next standby (max 5 attempts).
+5. Overall connect budget: target <= 8 s with a warm cache; hard limit 30 s, then Error with Retry.
+   The user can cancel at any time (same single button).
+6. Prefer stickiness: if the last known good server (successful within 24 h) passes a quick probe
+   (< 2 s) and its score is within 15% of the best, use it.
+
+### 8.4 Health monitoring while connected
+- Measure with the running core's own delay measurement (Phase 0) so no extra listeners are needed.
+  Interval 20 s with the screen on, 60 s with the screen off; probe timeout 5 s; on failure re-probe
+  once after 2 s against a different endpoint to avoid false positives.
+- Ping shown to the user = median of the last 5 successful samples.
+- Failure rule: 3 consecutive failed checks -> FailingOver. Accelerate to 2 when traffic counters
+  show bytes sent increasing while bytes received stay flat for > 15 s.
+- Quality (displayed bucket changes only after 2 consecutive samples in the new bucket):
+  Excellent (median <= 150 ms and 0 failures in the last 5), Good (<= 300 ms), Fair (<= 600 ms),
+  Poor (> 600 ms or >= 2 failures in the last 5), Offline (3 consecutive failures).
+- Failover = quarantine the failing server (cool-downs 2 min, 10 min, 1 h, 6 h), switch to the next
+  standby, verify as in 8.3 step 4. If the standby queue is exhausted: stop the tunnel, run a full
+  Part C test (probing is safe again), connect to the new best.
+- Circuit breaker: after 12 consecutive failed attempts across >= 10 distinct servers, go to
+  Error(NO_WORKING_SERVER) and stop retrying until the user taps Retry or the network changes.
+- Backoff between recovery cycles: 1, 2, 4, 8, 16, 30, 60 s (+/-20% jitter), reset after a
+  successful connection.
+
+### 8.5 Network changes (do not blame the server)
+- Observe default-network changes (use the project's existing network callback if present;
+  `registerDefaultNetworkCallback` needs API 24+, otherwise use a network-request callback).
+- Network lost: state WaitingForNetwork; pause health checks and failover; do not penalize the
+  server.
+- Network back: wait 1.5 s to settle, re-verify the SAME server first. If it recovers, resume
+  silently. If not within 10 s, fail over, and skip the quarantine penalty when the network changed
+  in the last 15 s. Reuse the engine's existing underlying-network handling (for example
+  `setUnderlyingNetworks`); do not duplicate it.
+
+### 8.6 Avoiding unnecessary switching
+- Switch ONLY when (1) health checks fail (8.4) or (2) quality has been Poor continuously for
+  >= 180 s. Quality-driven switches are limited to one per 15 min and are accepted only if the new
+  server verifies better than the old server's recent median; otherwise stay, or return to the
+  previous server if it still verifies.
+- Never switch just because another server has a higher score.
+- Minimum dwell time after any switch: 10 min (forced failover excepted).
+
+## 9. PART E - ENGINE INTEGRATION (`FreeVpnEngineAdapter`)
+
+- Convert the chosen server into the project's existing profile/config representation and start it
+  through the existing engine API. Do not duplicate config-building logic: reuse the generator used
+  for manual profiles, feeding it typed objects.
+- The profile is EPHEMERAL: not saved in the profile list or any subscription group, not selectable
+  elsewhere, not exportable/shareable/QR-able, not counted by existing features. Starting or
+  stopping a Free VPN session must not change the user's selected manual profile or any persisted
+  setting. After disconnect, the app's manual state is exactly as before.
+- Use the app's existing routing, DNS, sniffing, IPv6 and LAN-bypass behavior. DNS must go through
+  the tunnel (no DNS leak) exactly as for normal profiles. Do not weaken any setting for the free
+  profile.
+- Prefer swapping the outbound by restarting only the core while keeping the TUN/VpnService
+  established (fewer interruptions, no traffic leaking during the gap), but only if the existing
+  engine already supports it. Otherwise use the existing restart path unchanged. Do not re-architect
+  the engine.
+- Open no new ports. Add no new VpnService, notification channel or permission unless strictly
+  necessary. Reuse the existing notification (text: "MAXNET5G Free VPN - Connected" with the
+  existing Disconnect action; never show server details).
+- Expose from the engine only what is missing (a state callback, traffic counters, ...). Keep edits
+  to existing engine files minimal, additive and backward-compatible, and list each one in the final
+  report.
+
+## 10. PART F - USER INTERFACE
+
+- Add one minimal "Free VPN" section/screen following the app's navigation, theme, UI toolkit
+  (Compose or XML), spacing and iconography. Do not change the default start destination. Choose the
+  entry point after Phase 0 (tab, segment or prominent card): visible but unobtrusive.
+- Elements (and nothing else): title "Free VPN"; ONE large Connect/Disconnect button; connection
+  status; current ping; connection quality; an "Auto server selection" indicator (small badge or
+  line stating that the best server is chosen automatically).
+- NEVER display server lists, names, IPs, countries, flags, protocols, transports or config text,
+  in the UI, notifications, toasts or release logs.
+- State -> UI (all strings localized):
+  - Idle: button "Connect"; status "Disconnected"; ping "-"; quality "-".
+  - Preparing/Refreshing/Testing: button "Cancel" (same button, with progress); status "Finding the
+    best server...".
+  - Connecting/Verifying: button "Cancel"; status "Connecting...".
+  - Connected: button "Disconnect"; status "Connected"; ping "NN ms"; quality
+    Excellent/Good/Fair/Poor.
+  - Degraded: "Unstable connection..."; FailingOver: "Switching server..."; Reconnecting:
+    "Reconnecting..."; WaitingForNetwork: "Waiting for network...".
+  - Error: short plain-language message per reason; the button becomes "Connect" (retry).
+- Quality is shown as text plus icon/color (never color alone). Support dark/light themes, large font
+  scales, landscape and tablets, TalkBack (content descriptions, live-region announcements of status
+  changes, touch targets >= 48 dp) and reduced motion.
+- The UI observes orchestrator state and survives rotation, process death and service restarts
+  without resetting a live connection.
+- One-time, dismissible notice at first use (short text + OK, never repeated): "Free public servers
+  are run by unknown third parties. Avoid banking or other sensitive logins."
+- Add strings for every language already in the project (at minimum English and Persian if Persian
+  exists, with correct RTL layout). No missing-translation lint errors.
+
+## 11. SECURITY AND PRIVACY
+
+Threat model: every server in the list may be malicious, hostile or compromised; mirrors/CDNs may be
+tampered with; list contents may be crafted to exploit the parser.
+- Integrity: signed manifest, rollback protection, strict validation (5.6, 6.3).
+- Parser/config injection: typed builders only; allowlists for every field; length and charset
+  limits; no filenames or shell commands derived from config content; use hash IDs as keys.
+- Network pivoting: reject private/loopback/link-local targets before and after DNS resolution.
+- Resource exhaustion: caps on download size, JSON depth, server count, field length, parse time,
+  probe concurrency and total probing time.
+- Untrusted exit: warn once (section 10), refuse plaintext/insecure configs (5.4), run the integrity
+  canary in the pipeline, send no identifiers or credentials to servers, and make no privacy claims
+  ("anonymous", "secure") in the UI.
+- Local exposure: no new unauthenticated local listeners; any temporary probe inbound is
+  loopback-only with random port and credentials and lives only for the probe.
+- Secrets: signing key only in GitHub Actions secrets; the APK contains public keys only; CI jobs
+  that touch untrusted data have no secrets; actions pinned by SHA.
+- Logging: no full hosts, UUIDs, passwords or configs in release logs. Refer to servers as
+  `id.take(8)`. Debug builds may keep an in-memory ring buffer of orchestrator decisions (state
+  transitions, reasons, scores) without sensitive fields.
+- Telemetry: none. Network requests go only to the configured mirrors and the probe endpoints.
+- VpnService compliance: no traffic inspection, injection or ad behavior; collect no user traffic
+  data.
+
+## 12. RELIABILITY, PERFORMANCE AND BATTERY
+
+- No heavy work on the main thread; lazy initialization; app startup time must not regress.
+- Bounded concurrency everywhere; every network call has a timeout; every retry loop has backoff
+  with jitter; no tight loops.
+- Opportunistic warm-up: when the Free VPN screen opens and the cache is fresh, you may pre-test the
+  top ~8 candidates once (cooldown 5 min, skipped under battery saver, skipped while a tunnel is up)
+  so Connect is near-instant. No other background probing.
+- Handle Doze/App Standby, process death, service restarts (same approach as the existing service),
+  low memory and Android 12+ foreground-service restrictions the way the existing engine does.
+- Release safety: add R8/ProGuard keep rules for any serialization classes you introduce and verify
+  that the release (minified) build still parses the manifest.
+- Memory: parse the manifest once, keep compact models, release probe instances immediately.
+
+## 13. TESTING AND VERIFICATION (REQUIRED)
+
+### 13.1 Pipeline (pytest)
+- Parser: each protocol with the edge cases of 5.3 (IPv6, encoded remarks, base64 padding variants,
+  missing fields, Reality params, gRPC, WS with query, unicode, huge fields, garbage input/fuzz).
+- Validator: every rule of 5.4 with positive and negative vectors (including DNS-rebinding-style
+  hosts through a fake resolver).
+- Dedup and canonical-ID stability; diversity caps; ranking; history/expiry logic.
+- Signing: generate keypair, sign, verify, tamper -> verification fails. Schema validation of output.
+- Safety net: a shrinking list does not publish.
+- Xray stage: an integration test against a local Xray server you start inside the test (loopback)
+  that proves the probe code works end to end.
+- Run `python -m free_config_pipeline.run --dry-run` locally and show the report.
+
+### 13.2 Android unit tests (JVM, coroutine test dispatcher with virtual time)
+- Same shared vectors as the pipeline (parser/validator parity).
+- Signature verification (valid, tampered, wrong key, unknown keyId), rollback rejection, stale
+  manifest handling, >30% invalid rejection, atomic cache and corruption recovery, seed fallback.
+- Scorer determinism and ordering; candidate-selection constraints; quarantine and backoff schedules.
+- Orchestrator with fake clock + fake prober + fake engine covering: happy path; first server fails
+  -> next; all fail -> Error; mid-session failure -> failover; fewer failures than the threshold ->
+  no failover; network loss -> waiting -> same server resumed; network loss does not quarantine;
+  user disconnect cancels everything; double-tap safety; manual-connection conflict; circuit
+  breaker; quality-driven switch limits; service-restart restoration.
+- ViewModel/UI tests for each state mapping.
+
+### 13.3 Real end-to-end verification (do not skip, do not simulate)
+- `assembleDebug`, `assembleRelease` (minified), lint and all unit tests pass; no new warnings.
+- Produce a real manifest with the pipeline (dry run, signed with a test key), serve it (local
+  server or a published mirror), run the app on a device/emulator and verify with evidence:
+  1. Connect works, exit IP changes, other traffic flows.
+  2. Block/kill the chosen server -> automatic failover (capture logs).
+  3. Airplane-mode toggle and Wi-Fi/mobile switch -> recovery without needless switching.
+  4. Offline start with cache -> Connect works.
+  5. Tampered manifest -> rejected, cache used.
+  6. Disconnect is immediate and stops all background work.
+  7. Regression: connect/disconnect a manual profile and a subscription profile, run the existing
+     delay tests, import/update subscriptions, change settings: all unchanged; the Free VPN session
+     leaves no trace in the profile list or selected profile.
+- If you cannot run on a device/emulator or have no network, still deliver everything, make the
+  JVM-testable parts pass, and provide an exact step-by-step manual test script for the owner. List
+  clearly what is unverified.
+
+## 14. TUNABLE DEFAULTS (one constants object per side; document them)
+
+Pipeline: run hourly (minute 17); MIN_SERVERS 20; max published 300; per-source cap 10 MB; Stage A
+timeout 3 s; Stage B 3 rounds; run budget 25 min; expire after 6 failed runs or 48 h; max 3 configs
+per (host, port).
+App data: soft TTL 3 h; stale limit 14 days; periodic refresh 6 h; mirror race delay 2 s; download
+cap 1 MB; timeouts 5/10/20 s.
+App probing: wave of 24 candidates; pre-check timeout 2.5 s (concurrency 12); real probe timeout
+6 s; concurrency 4 (2 low-RAM); early exit at 3 passes + 1.5 s; phase budget 12 s; max 3 waves.
+Connect: verify timeout 8 s; max 5 standby attempts; target <= 8 s warm / hard limit 30 s;
+stickiness window 24 h and 15% score margin.
+Monitor: interval 20 s (60 s screen off); probe timeout 5 s; 3 failures to fail over (2 with
+RX-stall); quarantine 2 min / 10 min / 1 h / 6 h; backoff 1-60 s +/-20%; circuit breaker 12
+attempts / 10 servers; dwell 10 min; quality-driven switch after Poor >= 180 s, max 1 per 15 min.
+
+## 15. DELIVERABLES AND FINAL REPORT
+
+Commits (logical, reviewable, one concern each): 1) pipeline + workflow + tests, 2) data layer,
+3) prober + ranker, 4) orchestrator/monitor + engine adapter, 5) UI + strings, 6) tests + docs.
+Docs: `docs/free-vpn.md` (architecture, state machine, runbook: secrets and key generation,
+endpoint configuration, adding sources, manual workflow dispatch, mirrors, seed update,
+troubleshooting) and `free-config-pipeline/README.md`.
+
+Final report (in your response), in this order:
+1. Summary of what now works.
+2. Architecture decisions and assumptions.
+3. Files added/modified, one line each (explicitly list every modification of an existing file and
+   why it was unavoidable).
+4. Owner setup steps (secrets, Pages, endpoints, keys, seed).
+5. Commands to build, test and run the pipeline.
+6. Verification evidence (commands + real outputs; pass/fail per item of 13.3).
+7. Regression results for existing features.
+8. Dependencies added and justification.
+9. Known limitations, risks and unverified items.
+10. Recommended follow-ups.
+End with a short summary in Persian.
+
+## 16. DEFINITION OF DONE
+
+[ ] Phase 0 report delivered before any code.
+[ ] Pipeline runs on schedule, produces a signed schema-valid manifest, publishes to Pages + data
+    branch, and refuses to publish a degraded list.
+[ ] App verifies signatures, rejects rollback/tampering, caches atomically, falls back to the seed,
+    refreshes automatically.
+[ ] On-device testing uses the existing Xray core and really measures connectivity; ranking is
+    performance-only.
+[ ] One tap connects to the best working server; failed servers are skipped automatically; success is
+    verified through the live tunnel.
+[ ] Failover and reconnection work for server failure and for network changes, without needless
+    switching.
+[ ] UI shows only: one button, status, ping, quality, auto-selection indicator (+ the one-time
+    notice). No lists, countries or configs anywhere.
+[ ] The free profile is ephemeral and leaves no trace; existing subscriptions, manual configs and
+    engine behavior are unchanged.
+[ ] No secrets in repo/APK/logs; untrusted-data jobs have no secrets; no new open ports.
+[ ] Debug and release (minified) builds, lint and all tests pass; real end-to-end evidence provided.
+[ ] Docs and final report complete; limitations stated honestly.
+
+## 17. OUT OF SCOPE
+
+Server lists or country selection in the UI; paid or self-hosted VPN servers; analytics, ads or
+tracking; changes to subscription or manual-config features; protocols beyond VLESS/VMess/Trojan
+(+Reality); scraping sites that need login or anti-bot bypass; kill-switch redesign; store-listing
+changes; unrelated refactors.

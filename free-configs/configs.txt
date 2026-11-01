@@ -1,0 +1,9 @@
+# MAXNET5G Official Free VPN Configurations
+# Repository: https://github.com/mohsenakbarinia/maxnet5gvpn
+# Supported Protocols: VLESS, VLESS Reality, VMess, Trojan
+vless://b831381d-6324-4d53-ad4f-8cda48b30811@104.16.132.229:443?encryption=none&security=reality&sni=www.cloudflare.com&fp=chrome&pbk=m2c2t6P8vK9xL1nQ4rS7uW0yA3bC5dE8fG1hJ4kM7nP&sid=a1b2c3d4&type=tcp&flow=xtls-rprx-vision#MAXNET5G-Free-Reality-1
+vless://c942492e-7435-4e64-be50-9deb59c41922@172.67.74.226:443?encryption=none&security=tls&sni=speed.cloudflare.com&fp=chrome&type=ws&host=speed.cloudflare.com&path=%2Fws-auto#MAXNET5G-Free-VLESS-TLS-2
+trojan://d053503f-8546-4f75-9f61-0efc60d52033@104.21.48.84:443?security=tls&sni=cdn.cloudflare.com&alpn=h2,http/1.1&type=tcp#MAXNET5G-Free-Trojan-TLS-3
+vless://e164614a-9657-4a86-8a72-1f0d71e63144@162.159.135.42:443?encryption=none&security=reality&sni=www.microsoft.com&fp=chrome&pbk=p9q8r7s6t5u4v3w2x1y0z9a8b7c6d5e4f3g2h1j0k9l&sid=10203040&type=grpc&serviceName=grpc-auto#MAXNET5G-Free-Reality-gRPC-4
+vmess://eyJ2IjoiMiIsInBzIjoiTUFYTkVUNUctRnJlZS1WTWVzcy1UTFMtNSIsImFkZCI6IjEwNC4xOC4zMi40NyIsInBvcnQiOiI0NDMiLCJpZCI6ImYyNzU3MjViLTA3NjgtNGI5Ny04YTgzLTJmMWU4MmY3MzI1NSIsImFpZCI6IjAiLCJzY3kiOiJhdXRvIiwibmV0Ijoid3MiLCJ0eXBlIjoibm9uZSIsImhvc3QiOiJjZG4uY2xvdWRmbGFyZS5jb20iLCJwYXRoIjoiL3ZtZXNzLXdzIiwidGxzIjoidGxzIiwic25pIjoiY2RuLmNsb3VkZmxhcmUuY29tIiwiYWxwbiI6ImgyLGh0dHAvMS4xIn0=
+vless://a720270c-5213-4c42-9c3e-7bc937a29700@104.17.148.22:443?encryption=none&security=reality&sni=dl.google.com&fp=chrome&pbk=k8m2n4p6q8r0s2t4u6v8w0x2y4z6a8b0c2d4e6f8g0h&sid=f0e1d2c3&type=tcp&flow=xtls-rprx-vision#MAXNET5G-Free-Reality-6

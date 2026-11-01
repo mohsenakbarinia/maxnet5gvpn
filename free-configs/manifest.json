@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "version": 1,
+  "updated_at": "2026-11-01T09:32:05Z",
+  "config_count": 6,
+  "sha256": "2e902f65571dbe3430785412085f936005e5fadff7f2e5d832b69629e5c06723",
+  "repository": "https://github.com/mohsenakbarinia/maxnet5gvpn",
+  "configs_path": "free-configs/configs.txt",
+  "supported_protocols": [
+    "VLESS",
+    "VLESS_REALITY",
+    "VMESS",
+    "TROJAN"
+  ],
+  "signature": ""
+}

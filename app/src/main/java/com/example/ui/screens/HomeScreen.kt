@@ -98,6 +98,8 @@ import com.example.R
 import com.example.core.autovpn.AutoQualityGrade
 import com.example.core.autovpn.AutoVpnStage
 import com.example.core.autovpn.AutoVpnStatusSnapshot
+import com.example.core.autovpn.ConnectionOwnership
+import com.example.core.autovpn.VpnAppMode
 import com.example.domain.model.AppSettings
 import com.example.domain.model.ConnectionQualityReport
 import com.example.domain.model.DiagnosticSnapshot
@@ -127,12 +129,16 @@ import kotlinx.coroutines.delay
 fun HomeScreen(
     connectionState: VpnConnectionState,
     activeProfile: ServerProfile?,
+    personalProfile: ServerProfile? = activeProfile,
+    selectedVpnMode: VpnAppMode = VpnAppMode.FREE_VPN,
+    ownership: ConnectionOwnership = ConnectionOwnership.NONE,
     statistics: EngineStatistics,
     diagnostics: DiagnosticSnapshot = DiagnosticSnapshot(),
     qualityReport: ConnectionQualityReport = ConnectionQualityReport(),
     autoVpnStatus: AutoVpnStatusSnapshot = AutoVpnStatusSnapshot(),
     speedHistory: List<Pair<Long, Long>>,
     settings: AppSettings,
+    onSwitchVpnMode: (VpnAppMode) -> Unit = {},
     onToggleConnect: () -> Unit,
     onTestActiveLatency: (ServerProfile) -> Unit,
     onAutoSelectBest: () -> Unit,
@@ -212,21 +218,38 @@ fun HomeScreen(
                 Spacer(modifier = Modifier.height(10.dp))
 
                 // =========================================================================
-                // SECTION B — Minimal One-Tap Auto Free VPN Header
+                // SECTION B — Dual VPN Mode Selector (FREE VPN vs MY VPN) + Ownership Badge
                 // =========================================================================
+                DualVpnModeSelectorCard(
+                    selectedMode = selectedVpnMode,
+                    ownership = ownership,
+                    isFa = isFa,
+                    onSelectMode = onSwitchVpnMode
+                )
+
+                Spacer(modifier = Modifier.height(10.dp))
+
                 Column(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
-                        text = if (isFa) "سیستم هوشمند اتصال خودکار" else "Intelligent Auto Free VPN",
+                        text = if (selectedVpnMode == VpnAppMode.FREE_VPN) {
+                            if (isFa) "وی‌پی‌ان رایگان هوشمند (مخزن گیت‌هاب)" else "Intelligent Auto Free VPN"
+                        } else {
+                            if (isFa) "وی‌پی‌ان شخصی من (پروفایل‌ها و اشتراک‌ها)" else "My Personal VPN"
+                        },
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onBackground,
                         fontWeight = FontWeight.Bold
                     )
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = if (isFa) "کشف، تست موازی و اتصال به بهترین سرور فقط با یک لمس" else "One-tap automatic discovery, parallel testing & optimal connection",
+                        text = if (selectedVpnMode == VpnAppMode.FREE_VPN) {
+                            if (isFa) "کشف، تست موازی و اتصال به بهترین سرور فقط با یک لمس" else "One-tap automatic discovery, parallel testing & optimal connection"
+                        } else {
+                            if (isFa) "مدیریت مستقل کانفیگ‌ها و اشتراک‌های شخصی بدون تداخل با سرورهای رایگان" else "Independent personal profiles & subscriptions isolated from Free VPN"
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center
@@ -253,16 +276,19 @@ fun HomeScreen(
                 Spacer(modifier = Modifier.height(16.dp))
 
                 // =========================================================================
-                // SECTION D — Automatic Server Selection Status Card
+                // SECTION D — Mode-Specific Active Status Card (Free VPN vs My VPN)
                 // =========================================================================
                 ActiveServerCard(
+                    selectedVpnMode = selectedVpnMode,
                     activeProfile = activeProfile,
+                    personalProfile = personalProfile,
                     connectionState = connectionState,
                     autoVpnStatus = autoVpnStatus,
                     isFa = isFa,
                     usePersian = usePersian,
                     onTestActiveLatency = onTestActiveLatency,
-                    onAutoSelectBest = onAutoSelectBest
+                    onAutoSelectBest = onAutoSelectBest,
+                    onNavigateToProfiles = onNavigateToProfiles
                 )
 
                 Spacer(modifier = Modifier.height(12.dp))
@@ -800,22 +826,308 @@ private fun PremiumVpnPowerControl(
     }
 }
 
+@Composable
+private fun DualVpnModeSelectorCard(
+    selectedMode: VpnAppMode,
+    ownership: ConnectionOwnership,
+    isFa: Boolean,
+    onSelectMode: (VpnAppMode) -> Unit
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("dual_vpn_mode_selector"),
+        shape = RoundedCornerShape(16.dp),
+        color = MidnightSurface,
+        border = androidx.compose.foundation.BorderStroke(1.dp, MidnightBorder)
+    ) {
+        Column(modifier = Modifier.padding(8.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                val isFreeSelected = selectedMode == VpnAppMode.FREE_VPN
+                val isMyVpnSelected = selectedMode == VpnAppMode.MY_VPN
+
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = if (isFreeSelected) CyanPrimary.copy(alpha = 0.16f) else MidnightSurfaceVariant.copy(alpha = 0.5f),
+                    border = androidx.compose.foundation.BorderStroke(
+                        1.dp,
+                        if (isFreeSelected) CyanPrimary else MidnightBorder
+                    ),
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable { onSelectMode(VpnAppMode.FREE_VPN) }
+                        .testTag("mode_selector_free_vpn")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Bolt,
+                            contentDescription = null,
+                            tint = if (isFreeSelected) CyanPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = if (isFa) VpnAppMode.FREE_VPN.titleFa else VpnAppMode.FREE_VPN.titleEn,
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = if (isFreeSelected) FontWeight.Bold else FontWeight.Medium,
+                            color = if (isFreeSelected) CyanPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = if (isMyVpnSelected) EmeraldAccent.copy(alpha = 0.16f) else MidnightSurfaceVariant.copy(alpha = 0.5f),
+                    border = androidx.compose.foundation.BorderStroke(
+                        1.dp,
+                        if (isMyVpnSelected) EmeraldAccent else MidnightBorder
+                    ),
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable { onSelectMode(VpnAppMode.MY_VPN) }
+                        .testTag("mode_selector_my_vpn")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Security,
+                            contentDescription = null,
+                            tint = if (isMyVpnSelected) EmeraldAccent else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = if (isFa) VpnAppMode.MY_VPN.titleFa else VpnAppMode.MY_VPN.titleEn,
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = if (isMyVpnSelected) FontWeight.Bold else FontWeight.Medium,
+                            color = if (isMyVpnSelected) EmeraldAccent else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
+            if (ownership != ConnectionOwnership.NONE) {
+                Spacer(modifier = Modifier.height(6.dp))
+                val ownerColor = if (ownership == ConnectionOwnership.FREE) CyanPrimary else EmeraldAccent
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 6.dp)
+                        .testTag("ownership_status_badge"),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.CheckCircle,
+                        contentDescription = null,
+                        tint = ownerColor,
+                        modifier = Modifier.size(13.dp)
+                    )
+                    Spacer(modifier = Modifier.width(5.dp))
+                    Text(
+                        text = if (isFa) ownership.labelFa else ownership.labelEn,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = ownerColor,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+        }
+    }
+}
+
 /**
- * Automatic Server Selection Status Card.
- * Displays intelligent discovery, parallel testing, quality ranking, and failover status
- * without requiring manual server lists, country selectors, or protocol pickers.
+ * Mode-Specific Server Status Card.
+ * - In [VpnAppMode.FREE_VPN]: Displays intelligent discovery, parallel testing, quality ranking,
+ *   GitHub manifest sync status, and automatic selection indicator without exposing raw credentials or server lists.
+ * - In [VpnAppMode.MY_VPN]: Displays the user's selected Personal profile from Room with quick navigation
+ *   to Personal Profiles & Subscriptions.
  */
 @Composable
 private fun ActiveServerCard(
+    selectedVpnMode: VpnAppMode = VpnAppMode.FREE_VPN,
     activeProfile: ServerProfile?,
+    personalProfile: ServerProfile? = activeProfile,
     connectionState: VpnConnectionState,
     autoVpnStatus: AutoVpnStatusSnapshot,
     isFa: Boolean,
     usePersian: Boolean,
     onTestActiveLatency: (ServerProfile) -> Unit,
-    onAutoSelectBest: () -> Unit
+    onAutoSelectBest: () -> Unit,
+    onNavigateToProfiles: () -> Unit = {}
 ) {
     val isConnected = connectionState == VpnConnectionState.CONNECTED
+
+    if (selectedVpnMode == VpnAppMode.MY_VPN) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(20.dp))
+                .testTag("selected_server_card"),
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = MidnightSurface),
+            border = androidx.compose.foundation.BorderStroke(
+                1.dp,
+                if (isConnected) EmeraldAccent.copy(alpha = 0.4f) else MidnightBorder
+            )
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        modifier = Modifier.weight(1f),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(46.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(EmeraldAccent.copy(alpha = 0.14f))
+                                .border(1.dp, EmeraldAccent.copy(alpha = 0.45f), RoundedCornerShape(14.dp)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Security,
+                                contentDescription = null,
+                                tint = EmeraldAccent,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = if (isFa) "پروفایل شخصی منتخب (MY VPN)" else "SELECTED PERSONAL PROFILE",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = EmeraldAccent,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = personalProfile?.remarks
+                                    ?: if (isFa) "پروفایل شخصی انتخاب نشده است" else "No Personal Profile Selected",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Spacer(modifier = Modifier.height(3.dp))
+                            Text(
+                                text = if (personalProfile != null) {
+                                    "${personalProfile.protocol.displayName} • ${personalProfile.network.displayName} • ${personalProfile.security.displayName}"
+                                } else {
+                                    if (isFa) "برای افزودن کانفیگ یا لینک اشتراک شخصی ضربه بزنید" else "Tap below to import personal configs or subscriptions"
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = EmeraldAccent.copy(alpha = 0.14f),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, EmeraldAccent.copy(alpha = 0.45f)),
+                        modifier = Modifier.testTag("auto_connection_quality_badge")
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                text = if (isFa) "شخصی" else "Personal",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = EmeraldAccent,
+                                fontWeight = FontWeight.Bold
+                            )
+                            personalProfile?.lastLatencyMs?.let { ping ->
+                                Text(
+                                    text = "${LocalizationHelper.formatDigits(ping.toString(), usePersian)} ms",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontFamily = JetBrainsMonoFontFamily,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onNavigateToProfiles,
+                        shape = RoundedCornerShape(12.dp),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, MidnightBorder),
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("open_personal_profiles_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                            contentDescription = null,
+                            tint = EmeraldAccent,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = if (isFa) "پروفایل‌های من" else "My Profiles",
+                            style = MaterialTheme.typography.labelMedium
+                        )
+                    }
+
+                    OutlinedButton(
+                        onClick = {
+                            if (personalProfile != null) {
+                                onTestActiveLatency(personalProfile)
+                            } else {
+                                onAutoSelectBest()
+                            }
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, MidnightBorder),
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("test_active_latency_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Speed,
+                            contentDescription = null,
+                            tint = CyanPrimary,
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = stringResource(R.string.test_latency_btn),
+                            style = MaterialTheme.typography.labelMedium
+                        )
+                    }
+                }
+            }
+        }
+        return
+    }
+
     val candidateMetrics = autoVpnStatus.activeCandidate?.metrics
     val qualityGrade = candidateMetrics?.qualityGrade ?: when {
         isConnected -> AutoQualityGrade.GOOD
@@ -837,17 +1149,7 @@ private fun ActiveServerCard(
     }
 
     val statusSubtitle = if (isFa) autoVpnStatus.detailMessageFa else autoVpnStatus.detailMessageEn
-
-    val protocolSummary = remember(activeProfile) {
-        if (activeProfile == null) {
-            "VLESS Reality • VLESS • VMess • Trojan"
-        } else {
-            val isReality = activeProfile.protocol == VpnProtocol.VLESS &&
-                (activeProfile.security == SecurityType.REALITY || activeProfile.realityPublicKey.isNotBlank())
-            val protoName = if (isReality) "VLESS Reality" else activeProfile.protocol.displayName
-            "$protoName · ${activeProfile.network.displayName} · ${activeProfile.security.displayName}"
-        }
-    }
+    val syncStatusLine = if (isFa) autoVpnStatus.lastSyncStatusFa else autoVpnStatus.lastSyncStatusEn
 
     Card(
         modifier = Modifier
@@ -921,16 +1223,14 @@ private fun ActiveServerCard(
 
                         Spacer(modifier = Modifier.height(4.dp))
 
-                        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-                            Text(
-                                text = protocolSummary,
-                                style = MaterialTheme.typography.labelSmall,
-                                fontFamily = JetBrainsMonoFontFamily,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
+                        Text(
+                            text = syncStatusLine,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = CyanPrimary.copy(alpha = 0.9f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.testTag("free_vpn_sync_status")
+                        )
                     }
                 }
 

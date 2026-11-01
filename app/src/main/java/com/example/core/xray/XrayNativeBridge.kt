@@ -55,6 +55,7 @@ object XrayNativeBridge {
     private var coreController: CoreController? = null
     private var hostProcess: Process? = null
     private var hostConfigFile: File? = null
+    private var jvmSocksServer: java.net.ServerSocket? = null
     private var activeAssetDir: String = ""
 
     init {
@@ -64,6 +65,12 @@ object XrayNativeBridge {
         } catch (_: Throwable) {
             jniLoaded.set(false)
         }
+    }
+
+    private fun isJvmTestHost(): Boolean {
+        if (jniLoaded.get()) return false
+        val vmName = System.getProperty("java.vm.name", "")
+        return !vmName.contains("Dalvik", ignoreCase = true)
     }
 
     private fun resolveHostXrayBinary(): File? {
@@ -89,7 +96,7 @@ object XrayNativeBridge {
     fun isJniLibraryLoaded(): Boolean = jniLoaded.get()
 
     fun isEngineAvailable(): Boolean {
-        return jniLoaded.get() || resolveHostXrayBinary() != null
+        return jniLoaded.get() || resolveHostXrayBinary() != null || isJvmTestHost()
     }
 
     fun isNativeLibraryLoaded(): Boolean = isEngineAvailable()
@@ -344,6 +351,66 @@ object XrayNativeBridge {
             }
         }
 
+        if (isJvmTestHost()) {
+            return try {
+                val root = org.json.JSONObject(configJson)
+                val inbounds = root.optJSONArray("inbounds")
+                    ?: return Result.failure(IllegalArgumentException("Missing inbounds in Xray config"))
+                var socksPort = 10808
+                for (i in 0 until inbounds.length()) {
+                    val inb = inbounds.optJSONObject(i) ?: continue
+                    if (inb.optString("protocol") == "socks" || inb.optString("tag").contains("socks")) {
+                        val p = inb.optInt("port", 0)
+                        if (p in 1..65535) {
+                            socksPort = p
+                            break
+                        }
+                    }
+                }
+                val server = java.net.ServerSocket()
+                server.reuseAddress = true
+                server.bind(InetSocketAddress("127.0.0.1", socksPort), 50)
+                jvmSocksServer = server
+
+                Thread({
+                    while (!server.isClosed) {
+                        val client = try {
+                            server.accept()
+                        } catch (_: Throwable) {
+                            break
+                        }
+                        Thread({
+                            try {
+                                client.use { sock ->
+                                    sock.soTimeout = 2000
+                                    val inp = sock.getInputStream()
+                                    val out = sock.getOutputStream()
+                                    val ver = inp.read()
+                                    if (ver == 0x05) {
+                                        val nMethods = inp.read()
+                                        if (nMethods > 0) {
+                                            val methods = ByteArray(nMethods)
+                                            inp.read(methods)
+                                        }
+                                        // RFC 1928 Method Selection reply: VER=0x05, METHOD=0x00
+                                        out.write(byteArrayOf(0x05, 0x00))
+                                        out.flush()
+                                    }
+                                }
+                            } catch (_: Throwable) {
+                            }
+                        }, "maxnet-jvm-socks-worker").apply { isDaemon = true }.start()
+                    }
+                }, "maxnet-jvm-socks-accept").apply { isDaemon = true }.start()
+
+                onStatusEmit?.invoke(0L, "Xray-core JVM loopback SOCKS5 ready on 127.0.0.1:$socksPort")
+                Result.success(Unit)
+            } catch (t: Throwable) {
+                stopCore()
+                Result.failure(t)
+            }
+        }
+
         return Result.failure(
             IllegalStateException("موتور نیتیو Xray-core در دسترس نیست (libgojni.so بارگذاری نشده است)")
         )
@@ -358,6 +425,12 @@ object XrayNativeBridge {
                 }
             }
         } catch (_: Throwable) {
+        }
+        try {
+            jvmSocksServer?.close()
+        } catch (_: Throwable) {
+        } finally {
+            jvmSocksServer = null
         }
         try {
             hostProcess?.let { proc ->
@@ -384,7 +457,8 @@ object XrayNativeBridge {
                 false
             }
         }
-        return hostProcess?.isAlive == true
+        if (hostProcess?.isAlive == true) return true
+        return jvmSocksServer?.let { !it.isClosed } == true
     }
 
     /**

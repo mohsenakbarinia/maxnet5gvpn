@@ -1,0 +1,55 @@
+name: Validate & Publish Free VPN Configs Manifest
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'free-configs/configs.txt'
+      - 'scripts/validate_free_configs.py'
+  pull_request:
+    paths:
+      - 'free-configs/**'
+      - 'scripts/validate_free_configs.py'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  validate-and-update-manifest:
+    runs-only-on-linux: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Validate configs.txt, deduplicate, and update manifest.json
+        run: |
+          python3 scripts/validate_free_configs.py \
+            --configs free-configs/configs.txt \
+            --manifest free-configs/manifest.json \
+            --dedupe-in-place \
+            --update-manifest
+
+      - name: Verify manifest.json matches configs.txt
+        run: |
+          python3 scripts/validate_free_configs.py \
+            --configs free-configs/configs.txt \
+            --manifest free-configs/manifest.json
+
+      - name: Commit updated manifest.json on push to main
+        if: github.event_name != 'pull_request'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if ! git diff --quiet free-configs/; then
+            git add free-configs/configs.txt free-configs/manifest.json
+            git commit -m "chore(free-configs): update validated manifest.json [skip ci]"
+            git push
+          fi

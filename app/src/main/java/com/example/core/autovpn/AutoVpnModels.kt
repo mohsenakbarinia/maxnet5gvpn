@@ -4,6 +4,58 @@ import com.example.domain.model.ServerProfile
 import com.example.domain.model.VpnProtocol
 
 /**
+ * Top-level operating mode of MAXNET5G VPN.
+ * - [FREE_VPN]: Uses exclusively repository-managed free configurations (`free-configs/configs.txt` & `manifest.json`).
+ * - [MY_VPN]: Uses exclusively the user's personal configurations and subscriptions stored in Room.
+ */
+enum class VpnAppMode(
+    val titleEn: String,
+    val titleFa: String,
+    val subtitleEn: String,
+    val subtitleFa: String
+) {
+    FREE_VPN(
+        titleEn = "FREE VPN",
+        titleFa = "وی‌پی‌ان رایگان",
+        subtitleEn = "Automatic GitHub Free Configs • One-Tap Smart Connect",
+        subtitleFa = "دریافت خودکار از گیت‌هاب • اتصال هوشمند با یک لمس"
+    ),
+    MY_VPN(
+        titleEn = "MY VPN",
+        titleFa = "وی‌پی‌ان شخصی من",
+        subtitleEn = "Personal Configs & Subscriptions • Full Control",
+        subtitleFa = "کانفیگ‌ها و اشتراک‌های شخصی • مدیریت کامل"
+    )
+}
+
+/**
+ * Tracks single-engine session ownership across the shared Xray-core / VpnService pipeline.
+ */
+enum class ConnectionOwnership(
+    val labelEn: String,
+    val labelFa: String
+) {
+    NONE("Disconnected", "غیرمتصل"),
+    FREE("Free VPN Active", "وی‌پی‌ان رایگان فعال"),
+    PERSONAL("Personal VPN Active", "وی‌پی‌ان شخصی فعال")
+}
+
+/**
+ * Cryptographically hashed metadata manifest (`free-configs/manifest.json`) from the
+ * official MAXNET5G GitHub repository (`https://github.com/mohsenakbarinia/maxnet5gvpn`).
+ */
+data class FreeConfigManifest(
+    val schemaVersion: Int = 1,
+    val version: Int = 1,
+    val updatedAt: String = "",
+    val configCount: Int = 0,
+    val sha256: String = "",
+    val repository: String = "https://github.com/mohsenakbarinia/maxnet5gvpn",
+    val configsPath: String = "free-configs/configs.txt",
+    val signature: String = ""
+)
+
+/**
  * Lifecycle stages of the MAXNET5G Intelligent Auto Free VPN System.
  */
 enum class AutoVpnStage(
@@ -15,8 +67,8 @@ enum class AutoVpnStage(
         titleFa = "آماده اتصال هوشمند خودکار"
     ),
     DISCOVERING_CONFIGS(
-        titleEn = "Discovering Public Configurations...",
-        titleFa = "در حال کشف خودکار کانفیگ‌های رایگان..."
+        titleEn = "Syncing Free Configurations from GitHub...",
+        titleFa = "در حال دریافت کانفیگ‌های رایگان از گیت‌هاب..."
     ),
     TESTING_CANDIDATES(
         titleEn = "Testing Candidate Servers in Parallel...",
@@ -67,12 +119,13 @@ enum class AutoQualityGrade(
 }
 
 /**
- * Configurable public configuration source (GitHub raw feeds or lightweight collection backend API).
+ * Configurable public configuration source (official MAXNET5G GitHub repository feed).
  */
 data class AutoVpnSourceFeed(
     val id: String,
     val name: String,
     val url: String,
+    val manifestUrl: String? = null,
     val isBackendJsonFeed: Boolean = false,
     val enabled: Boolean = true
 )
@@ -132,5 +185,11 @@ data class AutoVpnStatusSnapshot(
     val failoverAttempt: Int = 0,
     val maxFailoverAttempts: Int = 5,
     val isContinuousOptimizationActive: Boolean = false,
+    val manifestVersion: Int = 1,
+    val manifestUpdatedAt: String = "",
+    val manifestSha256: String = "",
+    val isUsingOfflineCache: Boolean = false,
+    val lastSyncStatusEn: String = "Official GitHub Repository • Verified SHA-256",
+    val lastSyncStatusFa: String = "مخزن رسمی گیت‌هاب • تاییدشده با SHA-256",
     val lastUpdatedMs: Long = 0L
 )
