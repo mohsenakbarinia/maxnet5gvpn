@@ -3,6 +3,7 @@ package com.example.core.xray
 import android.content.Context
 import android.net.ConnectivityManager
 import android.os.Build
+import android.os.SystemClock
 import android.system.OsConstants
 import android.util.Base64
 import go.Seq
@@ -11,9 +12,9 @@ import libv2ray.CoreController
 import libv2ray.Libv2ray
 import libv2ray.ProcessFinder
 import java.io.File
-import java.net.HttpURLConnection
+import java.net.InetAddress
 import java.net.InetSocketAddress
-import java.net.Proxy
+import java.net.ServerSocket
 import java.net.Socket
 import java.net.URL
 import java.security.SecureRandom
@@ -31,6 +32,13 @@ data class OutboundTrafficDelta(
     val totalDownloadBytes: Long get() = proxyDownloadBytes + directDownloadBytes
 }
 
+data class RealProxyLatencyMeasurement(
+    val medianLatencyMs: Long,
+    val sampleLatenciesMs: List<Long>,
+    val warmupLatencyMs: Long? = null,
+    val targetUrl: String
+)
+
 /**
  * Production Native Bridge for Official Xray-core v26.10.29 (`2dust/AndroidLibXrayLite` Lib v40,
  * upstream `XTLS/Xray-core v26.10.29` commit `0afec66`).
@@ -45,7 +53,7 @@ object XrayNativeBridge {
 
     const val PINNED_XRAY_VERSION = "v26.10.29"
     const val PINNED_UPSTREAM_COMMIT = "0afec66"
-    const val DEFAULT_DELAY_TEST_URL = "https://www.google.com/generate_204"
+    const val DEFAULT_DELAY_TEST_URL = "https://www.gstatic.com/generate_204"
     const val FALLBACK_DELAY_TEST_URL = "https://cp.cloudflare.com/generate_204"
 
     private val jniLoaded = AtomicBoolean(false)
@@ -69,7 +77,7 @@ object XrayNativeBridge {
 
     private fun isJvmTestHost(): Boolean {
         if (jniLoaded.get()) return false
-        val vmName = System.getProperty("java.vm.name", "")
+        val vmName = System.getProperty("java.vm.name").orEmpty()
         return !vmName.contains("Dalvik", ignoreCase = true)
     }
 
@@ -505,49 +513,92 @@ object XrayNativeBridge {
     }
 
     /**
-     * Measures real HTTP 204 round-trip latency through the active Xray instance.
-     * Never uses a plain TCP socket handshake to the remote server as a substitute.
+     * Measures elapsed time in milliseconds using [SystemClock.elapsedRealtime] as required on Android,
+     * falling back to [System.nanoTime] only when `SystemClock.elapsedRealtime()` is 0 or frozen in unit test shadows.
      */
-    fun measureActiveProxyDelay(
-        localSocksPort: Int,
-        testUrl: String = DEFAULT_DELAY_TEST_URL,
-        timeoutMs: Int = 6000
-    ): Result<Long> {
-        if (!isCoreRunning()) {
-            return Result.failure(IllegalStateException("Xray-core is not running"))
+    fun monotonicNowMs(): Long {
+        val elapsed = try {
+            SystemClock.elapsedRealtime()
+        } catch (_: Throwable) {
+            0L
         }
+        return if (elapsed > 0L) elapsed else (System.nanoTime() / 1_000_000L)
+    }
 
-        // 1. On Android JNI, try CoreController.measureDelay first (dials directly through coreInstance)
-        if (jniLoaded.get()) {
-            val ctrl = coreController
-            if (ctrl != null && ctrl.isRunning) {
-                try {
-                    val delay = ctrl.measureDelay(testUrl)
-                    if (delay > 0L) {
-                        return Result.success(delay)
+    private inline fun measureElapsedRealtimeMs(block: () -> Unit): Long {
+        val startElapsed = try {
+            SystemClock.elapsedRealtime()
+        } catch (_: Throwable) {
+            0L
+        }
+        val startNano = System.nanoTime()
+        block()
+        val endElapsed = try {
+            SystemClock.elapsedRealtime()
+        } catch (_: Throwable) {
+            0L
+        }
+        val endNano = System.nanoTime()
+        val elapsedDelta = endElapsed - startElapsed
+        val nanoDelta = (endNano - startNano) / 1_000_000L
+        return if (elapsedDelta > 0L) elapsedDelta else nanoDelta.coerceAtLeast(1L)
+    }
+
+    /**
+     * Allocates an available ephemeral loopback port on `127.0.0.1` for an isolated temporary Xray test instance.
+     */
+    fun allocateEphemeralLoopbackPort(excludePorts: Set<Int> = setOf(10808, 10809)): Int {
+        repeat(8) {
+            try {
+                ServerSocket().use { server ->
+                    server.reuseAddress = true
+                    server.bind(InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 1)
+                    val port = server.localPort
+                    if (port in 1024..65535 && port !in excludePorts) {
+                        return port
                     }
-                } catch (_: Throwable) {
-                    // Fall through to SOCKS5 HTTP verification below
                 }
+            } catch (_: Throwable) {
             }
         }
+        return (24000..58000).random()
+    }
 
-        // 2. Perform real RFC 1928 SOCKS5 CONNECT + HTTP/HTTPS 204 request through 127.0.0.1:localSocksPort
-        val urlsToTry = if (testUrl == DEFAULT_DELAY_TEST_URL) {
-            listOf(DEFAULT_DELAY_TEST_URL, FALLBACK_DELAY_TEST_URL).distinct()
+    /**
+     * Computes the statistical median of a non-empty list of latency samples in milliseconds.
+     */
+    fun computeMedianLatencyMs(samples: List<Long>): Long {
+        require(samples.isNotEmpty()) { "Latency sample list cannot be empty" }
+        val sorted = samples.sorted()
+        val mid = sorted.size / 2
+        return if (sorted.size % 2 == 1) {
+            sorted[mid]
         } else {
-            listOf(testUrl)
+            ((sorted[mid - 1] + sorted[mid]) / 2L).coerceAtLeast(1L)
         }
-        var lastException: Throwable? = null
-        for (candidateUrl in urlsToTry) {
-            val startNs = System.nanoTime()
-            try {
-                val parsedUrl = URL(candidateUrl)
-                val scheme = parsedUrl.protocol.lowercase()
-                val host = parsedUrl.host
-                val port = if (parsedUrl.port > 0) parsedUrl.port else if (scheme == "https") 443 else 80
-                val path = parsedUrl.file.ifBlank { "/" }
+    }
 
+    /**
+     * Performs a single real RFC 1928 SOCKS5 CONNECT + HTTP/HTTPS request through `127.0.0.1:[localSocksPort]`,
+     * sending the target hostname via `ATYP = 0x03` so DNS resolution and HTTP traffic both traverse
+     * the Xray `proxy` outbound. Measures complete request-response duration until a valid HTTP 204/200 response
+     * is received, using [SystemClock.elapsedRealtime].
+     */
+    fun measureSingleHttpOverSocks5(
+        localSocksPort: Int,
+        candidateUrl: String,
+        timeoutMs: Int
+    ): Result<Long> {
+        return try {
+            val parsedUrl = URL(candidateUrl)
+            val scheme = parsedUrl.protocol.lowercase()
+            val host = parsedUrl.host
+            val port = if (parsedUrl.port > 0) parsedUrl.port else if (scheme == "https") 443 else 80
+            val path = parsedUrl.file.ifBlank { "/" }
+            var statusCode = -1
+            var statusLineText = ""
+
+            val elapsedMs = measureElapsedRealtimeMs {
                 Socket().use { rawSocket ->
                     rawSocket.tcpNoDelay = true
                     rawSocket.soTimeout = timeoutMs
@@ -564,7 +615,7 @@ object XrayNativeBridge {
                         throw IllegalStateException("SOCKS5 method negotiation failed on 127.0.0.1:$localSocksPort")
                     }
 
-                    // RFC 1928 CONNECT request: use ATYP=0x01 (IPv4), ATYP=0x04 (IPv6), or ATYP=0x03 (DOMAINNAME)
+                    // RFC 1928 CONNECT request: use ATYP=0x03 (DOMAINNAME) for hostnames so DNS goes through Xray
                     val cleanHost = host.trim().removeSurrounding("[", "]")
                     val isIpv4 = cleanHost.matches(Regex("^\\d{1,3}(\\.\\d{1,3}){3}$"))
                     val isIpv6 = cleanHost.contains(":")
@@ -573,11 +624,11 @@ object XrayNativeBridge {
                     when {
                         isIpv4 -> {
                             atyp = 0x01
-                            addrPayload = java.net.InetAddress.getByName(cleanHost).address
+                            addrPayload = InetAddress.getByName(cleanHost).address
                         }
                         isIpv6 -> {
                             atyp = 0x04
-                            addrPayload = java.net.InetAddress.getByName(cleanHost).address
+                            addrPayload = InetAddress.getByName(cleanHost).address
                         }
                         else -> {
                             atyp = 0x03
@@ -637,24 +688,109 @@ object XrayNativeBridge {
                     } else {
                         host
                     }
-                    val httpReq = "GET $path HTTP/1.1\r\nHost: $hostHeader\r\nUser-Agent: MAXNET5G-VPN/1.0\r\nConnection: close\r\n\r\n"
+                    val httpReq = "GET $path HTTP/1.1\r\nHost: $hostHeader\r\nUser-Agent: MAXNET5G-VPN/1.0\r\nAccept: */*\r\nConnection: close\r\n\r\n"
                     val tunOut = tunnelSocket.getOutputStream()
                     tunOut.write(httpReq.toByteArray(Charsets.UTF_8))
                     tunOut.flush()
 
                     val statusLine = tunnelSocket.getInputStream().bufferedReader().readLine()
                         ?: throw IllegalStateException("Empty HTTP response over proxy tunnel")
+                    statusLineText = statusLine
                     val parts = statusLine.split(" ")
-                    val statusCode = parts.getOrNull(1)?.toIntOrNull() ?: -1
-                    if (statusCode == 204 || statusCode == 200) {
-                        val elapsedMs = ((System.nanoTime() - startNs) / 1_000_000L).coerceAtLeast(1L)
-                        return Result.success(elapsedMs)
-                    } else {
-                        lastException = IllegalStateException("HTTP status $statusCode ($statusLine) from $candidateUrl")
+                    statusCode = parts.getOrNull(1)?.toIntOrNull() ?: -1
+                }
+            }
+
+            if (statusCode == 204 || statusCode == 200) {
+                Result.success(elapsedMs.coerceAtLeast(1L))
+            } else {
+                Result.failure(
+                    IllegalStateException("HTTP status $statusCode ($statusLineText) from $candidateUrl")
+                )
+            }
+        } catch (t: Throwable) {
+            Result.failure(t)
+        }
+    }
+
+    /**
+     * Measures real HTTP 204 round-trip latency through the active Xray instance.
+     * Supports warm-up + up to 3 measurements and returns the median successful result.
+     * Never uses a plain TCP socket handshake to the remote server as a substitute.
+     */
+    fun measureActiveProxyDelay(
+        localSocksPort: Int,
+        testUrl: String = DEFAULT_DELAY_TEST_URL,
+        timeoutMs: Int = 8500,
+        performWarmup: Boolean = true,
+        sampleCount: Int = 3
+    ): Result<Long> {
+        if (!isCoreRunning()) {
+            return Result.failure(IllegalStateException("Xray-core is not running"))
+        }
+
+        val urlsToTry = if (testUrl == DEFAULT_DELAY_TEST_URL) {
+            listOf(DEFAULT_DELAY_TEST_URL, FALLBACK_DELAY_TEST_URL).distinct()
+        } else {
+            listOf(testUrl, FALLBACK_DELAY_TEST_URL).distinct()
+        }
+
+        val totalDeadlineNs = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs.toLong().coerceAtLeast(2000L))
+        var lastException: Throwable? = null
+
+        for (candidateUrl in urlsToTry) {
+            val remainingForUrlMs = ((totalDeadlineNs - System.nanoTime()) / 1_000_000L).toInt()
+            if (remainingForUrlMs <= 400) break
+            val perRequestTimeoutMs = minOf(remainingForUrlMs, (timeoutMs / 2).coerceIn(2500, 6000))
+
+            if (performWarmup) {
+                // Optional warm-up request (excluded from recorded samples unless it is the only request before deadline)
+                runCatching {
+                    measureSingleHttpOverSocks5(localSocksPort, candidateUrl, perRequestTimeoutMs)
+                }
+            }
+
+            val samples = mutableListOf<Long>()
+            val targetSamples = sampleCount.coerceIn(1, 5)
+            for (i in 0 until targetSamples) {
+                val remMs = ((totalDeadlineNs - System.nanoTime()) / 1_000_000L).toInt()
+                if (remMs <= 300) break
+                val reqTimeout = minOf(remMs, perRequestTimeoutMs)
+                val res = measureSingleHttpOverSocks5(localSocksPort, candidateUrl, reqTimeout)
+                res.fold(
+                    onSuccess = { delayMs -> samples.add(delayMs) },
+                    onFailure = { err ->
+                        lastException = err
+                        // If first sample failed on this URL, break early and try fallback URL if available
+                        if (samples.isEmpty()) break
+                    }
+                )
+            }
+
+            if (samples.isNotEmpty()) {
+                return Result.success(computeMedianLatencyMs(samples))
+            }
+        }
+
+        // Fallback to CoreController.measureDelay on JNI if local SOCKS port is not exposed
+        if (jniLoaded.get()) {
+            val ctrl = coreController
+            if (ctrl != null && ctrl.isRunning) {
+                val samples = mutableListOf<Long>()
+                if (performWarmup) {
+                    runCatching { ctrl.measureDelay(testUrl) }
+                }
+                repeat(sampleCount.coerceIn(1, 3)) {
+                    try {
+                        val delay = ctrl.measureDelay(testUrl)
+                        if (delay > 0L) samples.add(delay)
+                    } catch (t: Throwable) {
+                        lastException = t
                     }
                 }
-            } catch (t: Throwable) {
-                lastException = t
+                if (samples.isNotEmpty()) {
+                    return Result.success(computeMedianLatencyMs(samples))
+                }
             }
         }
 
@@ -666,9 +802,298 @@ object XrayNativeBridge {
         )
     }
 
+    private fun awaitTemporarySocksReady(
+        localSocksPort: Int,
+        isInstanceAlive: () -> Boolean,
+        maxWaitMs: Long = 2500L
+    ): Result<Unit> {
+        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(maxWaitMs)
+        var lastError: Throwable? = null
+        while (System.nanoTime() < deadline) {
+            if (!isInstanceAlive()) {
+                return Result.failure(IllegalStateException("Temporary Xray-core instance exited during startup"))
+            }
+            try {
+                Socket().use { sock ->
+                    sock.tcpNoDelay = true
+                    sock.soTimeout = 500
+                    sock.connect(InetSocketAddress("127.0.0.1", localSocksPort), 400)
+                    val out = sock.getOutputStream()
+                    val inp = sock.getInputStream()
+                    out.write(byteArrayOf(0x05, 0x01, 0x00))
+                    out.flush()
+                    val reply = ByteArray(2)
+                    val read = inp.read(reply)
+                    if (read == 2 && reply[0] == 0x05.toByte() && reply[1] == 0x00.toByte()) {
+                        return Result.success(Unit)
+                    }
+                    lastError = IllegalStateException("Unexpected SOCKS5 greeting reply: read=$read")
+                }
+            } catch (t: Throwable) {
+                lastError = t
+                Thread.sleep(50)
+            }
+        }
+        return Result.failure(
+            IllegalStateException(
+                "Temporary Xray SOCKS5 port 127.0.0.1:$localSocksPort did not become ready: ${lastError?.message ?: "timeout"}",
+                lastError
+            )
+        )
+    }
+
+    /**
+     * Starts an isolated, temporary Xray-core instance with a local SOCKS5 listener on `127.0.0.1:[localSocksPort]`,
+     * waits for Xray startup to complete (excluding Xray startup time from network latency),
+     * performs 1 optional warm-up request + up to [sampleCount] HTTP 204 measurements through the proxy,
+     * returns the **median** successful latency, and guarantees complete cleanup of the temporary Xray
+     * instance, sockets, and files in `finally`.
+     */
+    fun measureRealVpnProxyLatency(
+        context: Context?,
+        temporarySocksConfigJson: String,
+        localSocksPort: Int,
+        speedtestConfigJson: String = temporarySocksConfigJson,
+        primaryUrl: String = DEFAULT_DELAY_TEST_URL,
+        fallbackUrl: String = FALLBACK_DELAY_TEST_URL,
+        overallTimeoutMs: Int = 9000,
+        performWarmup: Boolean = true,
+        sampleCount: Int = 3
+    ): Result<RealProxyLatencyMeasurement> {
+        initCoreEnvironment(context)
+
+        val urlsToTry = listOf(primaryUrl, fallbackUrl).map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+        val overallDeadlineNs = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(overallTimeoutMs.toLong().coerceIn(3000L, 15000L))
+
+        // Path A: Host Xray-core binary (Linux/JVM or bundled executable)
+        val hostBin = resolveHostXrayBinary()
+        if (hostBin != null) {
+            var tempConfigFile: File? = null
+            var tempProcess: Process? = null
+            return try {
+                tempConfigFile = File.createTempFile("xray_test_${localSocksPort}_", ".json")
+                tempConfigFile.writeText(temporarySocksConfigJson, Charsets.UTF_8)
+
+                val pb = ProcessBuilder(hostBin.absolutePath, "run", "-c", tempConfigFile.absolutePath)
+                pb.environment()["XRAY_LOCATION_ASSET"] = resolveHostAssetDir()
+                pb.redirectErrorStream(true)
+                val proc = pb.start()
+                tempProcess = proc
+
+                // Wait for temporary SOCKS5 listener to become ready BEFORE starting latency measurement timer
+                val readyRes = awaitTemporarySocksReady(
+                    localSocksPort = localSocksPort,
+                    isInstanceAlive = { proc.isAlive },
+                    maxWaitMs = 2500L
+                )
+                if (readyRes.isFailure) {
+                    val errOut = runCatching {
+                        if (!proc.isAlive) proc.inputStream.bufferedReader().readText() else ""
+                    }.getOrDefault("")
+                    return Result.failure(
+                        IllegalStateException(
+                            "Temporary Xray startup failed: ${readyRes.exceptionOrNull()?.message ?: ""} ${errOut.take(200)}".trim()
+                        )
+                    )
+                }
+
+                // Now Xray is started and ready; Xray startup time is strictly excluded from latency measurements.
+                var lastErr: Throwable? = null
+                for (candidateUrl in urlsToTry) {
+                    val remainingTotalMs = ((overallDeadlineNs - System.nanoTime()) / 1_000_000L).toInt()
+                    if (remainingTotalMs <= 400) break
+                    val perRequestTimeoutMs = minOf(remainingTotalMs, (overallTimeoutMs / 2).coerceIn(2500, 6000))
+
+                    var warmupMs: Long? = null
+                    if (performWarmup) {
+                        val warmupRes = measureSingleHttpOverSocks5(localSocksPort, candidateUrl, perRequestTimeoutMs)
+                        warmupMs = warmupRes.getOrNull()
+                    }
+
+                    val samples = mutableListOf<Long>()
+                    val targetSamples = sampleCount.coerceIn(1, 5)
+                    for (i in 0 until targetSamples) {
+                        val remMs = ((overallDeadlineNs - System.nanoTime()) / 1_000_000L).toInt()
+                        if (remMs <= 300) break
+                        val reqTimeout = minOf(remMs, perRequestTimeoutMs)
+                        val sampleRes = measureSingleHttpOverSocks5(localSocksPort, candidateUrl, reqTimeout)
+                        sampleRes.fold(
+                            onSuccess = { ms -> samples.add(ms) },
+                            onFailure = { err ->
+                                lastErr = err
+                                if (samples.isEmpty()) break
+                            }
+                        )
+                    }
+
+                    if (samples.isNotEmpty()) {
+                        return Result.success(
+                            RealProxyLatencyMeasurement(
+                                medianLatencyMs = computeMedianLatencyMs(samples),
+                                sampleLatenciesMs = samples.toList(),
+                                warmupLatencyMs = warmupMs,
+                                targetUrl = candidateUrl
+                            )
+                        )
+                    }
+                }
+
+                Result.failure(
+                    IllegalStateException(
+                        lastErr?.message ?: "Proxy HTTP 204 test timed out after ${overallTimeoutMs}ms",
+                        lastErr
+                    )
+                )
+            } catch (t: Throwable) {
+                Result.failure(t)
+            } finally {
+                try {
+                    tempProcess?.let { proc ->
+                        if (proc.isAlive) {
+                            proc.destroy()
+                            if (!proc.waitFor(800, TimeUnit.MILLISECONDS)) {
+                                proc.destroyForcibly()
+                            }
+                        }
+                    }
+                    runCatching { tempProcess?.inputStream?.close() }
+                    runCatching { tempProcess?.outputStream?.close() }
+                    runCatching { tempProcess?.errorStream?.close() }
+                } catch (_: Throwable) {
+                }
+                try {
+                    tempConfigFile?.delete()
+                } catch (_: Throwable) {
+                }
+            }
+        }
+
+        // Path B: Android JNI (`libgojni.so`)
+        if (jniLoaded.get()) {
+            // Try isolated temporary CoreController on ephemeral localSocksPort when main VPN is not occupying single-instance loop,
+            // or use Libv2ray.measureOutboundDelay which spins up an isolated temporary Xray instance per call in Go.
+            val canStartTempController = !isCoreRunning()
+            if (canStartTempController) {
+                var tempController: CoreController? = null
+                try {
+                    val ctrl = Libv2ray.newCoreController(object : CoreCallbackHandler {
+                        override fun startup(): Long = 0L
+                        override fun shutdown(): Long = 0L
+                        override fun onEmitStatus(code: Long, status: String?): Long = 0L
+                    })
+                    tempController = ctrl
+                    ctrl.startLoop(temporarySocksConfigJson, 0)
+                    val readyRes = awaitTemporarySocksReady(
+                        localSocksPort = localSocksPort,
+                        isInstanceAlive = { ctrl.isRunning },
+                        maxWaitMs = 2500L
+                    )
+                    if (readyRes.isSuccess) {
+                        var lastErr: Throwable? = null
+                        for (candidateUrl in urlsToTry) {
+                            val remainingTotalMs = ((overallDeadlineNs - System.nanoTime()) / 1_000_000L).toInt()
+                            if (remainingTotalMs <= 400) break
+                            val perRequestTimeoutMs = minOf(remainingTotalMs, (overallTimeoutMs / 2).coerceIn(2500, 6000))
+
+                            var warmupMs: Long? = null
+                            if (performWarmup) {
+                                warmupMs = measureSingleHttpOverSocks5(localSocksPort, candidateUrl, perRequestTimeoutMs).getOrNull()
+                            }
+
+                            val samples = mutableListOf<Long>()
+                            for (i in 0 until sampleCount.coerceIn(1, 5)) {
+                                val remMs = ((overallDeadlineNs - System.nanoTime()) / 1_000_000L).toInt()
+                                if (remMs <= 300) break
+                                val reqTimeout = minOf(remMs, perRequestTimeoutMs)
+                                val sampleRes = measureSingleHttpOverSocks5(localSocksPort, candidateUrl, reqTimeout)
+                                sampleRes.fold(
+                                    onSuccess = { ms -> samples.add(ms) },
+                                    onFailure = { err ->
+                                        lastErr = err
+                                        if (samples.isEmpty()) break
+                                    }
+                                )
+                            }
+
+                            if (samples.isNotEmpty()) {
+                                return Result.success(
+                                    RealProxyLatencyMeasurement(
+                                        medianLatencyMs = computeMedianLatencyMs(samples),
+                                        sampleLatenciesMs = samples.toList(),
+                                        warmupLatencyMs = warmupMs,
+                                        targetUrl = candidateUrl
+                                    )
+                                )
+                            }
+                        }
+                        if (lastErr != null) {
+                            return Result.failure(lastErr!!)
+                        }
+                    }
+                } catch (_: Throwable) {
+                    // Fall through to Libv2ray.measureOutboundDelay below
+                } finally {
+                    runCatching {
+                        if (tempController?.isRunning == true) {
+                            tempController.stopLoop()
+                        }
+                    }
+                }
+            }
+
+            // Isolated temporary Xray instance via Libv2ray.measureOutboundDelay (safe even while main VPN is active)
+            var lastErr: Throwable? = null
+            for (candidateUrl in urlsToTry) {
+                var warmupMs: Long? = null
+                if (performWarmup) {
+                    warmupMs = runCatching {
+                        val d = Libv2ray.measureOutboundDelay(speedtestConfigJson, candidateUrl)
+                        if (d > 0L) d else null
+                    }.getOrNull()
+                }
+                val samples = mutableListOf<Long>()
+                for (i in 0 until sampleCount.coerceIn(1, 5)) {
+                    if (System.nanoTime() >= overallDeadlineNs) break
+                    try {
+                        val delay = Libv2ray.measureOutboundDelay(speedtestConfigJson, candidateUrl)
+                        if (delay > 0L) {
+                            samples.add(delay)
+                        } else {
+                            lastErr = IllegalStateException("Xray measureOutboundDelay returned $delay ms")
+                            if (samples.isEmpty()) break
+                        }
+                    } catch (t: Throwable) {
+                        lastErr = t
+                        if (samples.isEmpty()) break
+                    }
+                }
+                if (samples.isNotEmpty()) {
+                    return Result.success(
+                        RealProxyLatencyMeasurement(
+                            medianLatencyMs = computeMedianLatencyMs(samples),
+                            sampleLatenciesMs = samples.toList(),
+                            warmupLatencyMs = warmupMs,
+                            targetUrl = candidateUrl
+                        )
+                    )
+                }
+            }
+            return Result.failure(
+                IllegalStateException(
+                    lastErr?.message ?: "Native Xray outbound proxy test failed",
+                    lastErr
+                )
+            )
+        }
+
+        return Result.failure(
+            IllegalStateException("Native Xray-core engine is not available in current runtime")
+        )
+    }
+
     /**
      * Measures real outbound proxy delay for an arbitrary Xray JSON configuration without
-     * affecting the main VPN session, using `Libv2ray.measureOutboundDelay`.
+     * affecting the main VPN session.
      */
     fun measureStandaloneOutboundDelay(
         context: Context?,

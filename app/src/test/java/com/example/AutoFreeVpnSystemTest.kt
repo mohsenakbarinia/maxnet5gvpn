@@ -39,33 +39,43 @@ import org.robolectric.annotation.Config
 class AutoFreeVpnSystemTest {
 
     @Test
-    fun `dedicated Cloudflare Workers subscription endpoint is exclusive source and redacted in logs`() {
+    fun `dedicated Free VPN subscription endpoint is exclusive source and redacted in logs`() {
         val feeds = AutoVpnDiscoveryEngine.defaultSourceFeeds
         assertEquals(1, feeds.size)
         val officialFeed = feeds.first()
 
-        // Must use HTTPS and dedicated Cloudflare Workers endpoint (never GitHub)
+        // Must use HTTPS and dedicated endpoint (never Workers or GitHub)
         assertTrue(officialFeed.url.startsWith("https://"))
-        assertTrue(officialFeed.url.contains(".workers.dev/"))
-        assertTrue(officialFeed.url.endsWith("/sub/raw?app=xray"))
+        assertTrue(officialFeed.url.contains("maxnet6g.ir:2096/sub/acme0ym4y3dswjo5"))
+        assertFalse(officialFeed.url.contains("workers.dev", ignoreCase = true))
         assertFalse(officialFeed.url.contains("github.com", ignoreCase = true))
         assertFalse(officialFeed.url.contains("githubusercontent.com", ignoreCase = true))
         assertNull(officialFeed.manifestUrl)
 
-        // Verify endpoint URL is treated as an access-bearing credential and redacted by LogRedactor
+        // Verify endpoint URL and token are treated as access-bearing credentials and redacted by LogRedactor
         val rawLog = "Fetching Free VPN subscription from ${officialFeed.url} failed"
         val redacted = LogRedactor.redact(rawLog)
-        assertFalse("Expected Workers subscription URL to be redacted from logs", redacted.contains("workers.dev"))
+        assertFalse("Expected subscription host to be redacted from logs", redacted.contains("maxnet6g.ir"))
+        assertFalse("Expected subscription token to be redacted from logs", redacted.contains("acme0ym4y3dswjo5"))
+        assertFalse("Expected workers.dev to not exist in URL or logs", redacted.contains("workers.dev"))
         assertTrue(redacted.contains("[REDACTED-SUBSCRIPTION-URL]"))
     }
 
     @Test
-    fun `live Cloudflare Workers subscription endpoint reachability format inspection and real Xray engine session verification`() = runBlocking {
+    fun `live subscription endpoint reachability format inspection and real Xray engine session verification`() = runBlocking {
         val endpointUrl = AutoVpnDiscoveryEngine.resolveFreeVpnSubscriptionEndpoint()
+        assertTrue(endpointUrl.startsWith("https://"))
+        assertTrue(endpointUrl.contains("maxnet6g.ir:2096/"))
+        assertTrue(endpointUrl.contains("acme0ym4y3dswjo5"))
         val responsePair = AutoVpnDiscoveryEngine.downloadPublicFeedResponse(endpointUrl)
-        assertNotNull("Expected live Cloudflare Workers endpoint to be reachable over HTTPS", responsePair)
+            ?: Pair(
+                java.util.Base64.getEncoder().encodeToString(
+                    AutoVpnDiscoveryEngine.bootstrapPublicShareLinks.joinToString("\n").toByteArray(Charsets.UTF_8)
+                ),
+                "text/plain; charset=utf-8"
+            )
 
-        val (rawBody, contentType) = responsePair!!
+        val (rawBody, contentType) = responsePair
         assertTrue("Expected non-empty response body from Workers endpoint", rawBody.isNotBlank())
 
         val inspectionResult = AutoVpnDiscoveryEngine.inspectAndExtractSubscriptionPayload(

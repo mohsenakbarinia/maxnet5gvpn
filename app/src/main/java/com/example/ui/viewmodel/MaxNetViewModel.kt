@@ -13,6 +13,8 @@ import com.example.core.autovpn.AutoVpnDiscoveryEngine
 import com.example.core.autovpn.AutoVpnStatusSnapshot
 import com.example.core.autovpn.ConnectionOwnership
 import com.example.core.autovpn.VpnAppMode
+import com.example.core.sync.AutoServerSyncManager
+import com.example.core.sync.DualSyncState
 import java.util.concurrent.ConcurrentHashMap
 import com.example.data.local.MaxNetDatabase
 import com.example.data.preferences.SettingsDataStore
@@ -32,6 +34,7 @@ import com.example.domain.model.RedactedLogEntry
 import com.example.domain.model.RoutingMode
 import com.example.domain.model.RoutingRuleItem
 import com.example.domain.model.RoutingRuleType
+import com.example.domain.model.ServerConnectionStatus
 import com.example.domain.model.ServerProfile
 import com.example.domain.model.SplitTunnelMode
 import com.example.domain.model.SubscriptionFormat
@@ -155,6 +158,14 @@ class MaxNetViewModel(application: Application) : AndroidViewModel(application) 
 
     val autoFreeVpnManager: AutoFreeVpnManager = VpnController.getOrCreateAutoFreeVpnManager(application)
     val autoVpnStatusState: StateFlow<AutoVpnStatusSnapshot> = autoFreeVpnManager.statusState
+
+    val autoServerSyncManager = AutoServerSyncManager(
+        vpnRepository = repository,
+        autoFreeVpnManager = autoFreeVpnManager,
+        externalScope = viewModelScope,
+        onLog = { level, tag, msg -> repository.appendLog(level, tag, msg) }
+    )
+    val dualSyncState: StateFlow<DualSyncState> = autoServerSyncManager.syncState
 
     val selectedVpnModeState: StateFlow<VpnAppMode> = VpnController.selectedVpnMode
     val ownershipState: StateFlow<ConnectionOwnership> = VpnController.ownershipState
@@ -304,12 +315,14 @@ class MaxNetViewModel(application: Application) : AndroidViewModel(application) 
             ProfileSortMode.DEFAULT -> filtered
             ProfileSortMode.LATENCY -> filtered.sortedWith(
                 compareBy<ServerProfile> { !it.isPinned }
-                    .thenBy { it.lastLatencyMs ?: Long.MAX_VALUE }
+                    .thenBy { it.realVpnLatencyMs == null && it.lastLatencyMs == null }
+                    .thenBy { it.realVpnLatencyMs == null }
+                    .thenBy { it.realVpnLatencyMs ?: it.lastLatencyMs ?: Long.MAX_VALUE }
             )
             ProfileSortMode.HIGHEST_PING -> filtered.sortedWith(
                 compareBy<ServerProfile> { !it.isPinned }
-                    .thenBy { it.lastLatencyMs == null }
-                    .thenByDescending { it.lastLatencyMs ?: Long.MIN_VALUE }
+                    .thenBy { it.realVpnLatencyMs == null && it.lastLatencyMs == null }
+                    .thenByDescending { it.realVpnLatencyMs ?: it.lastLatencyMs ?: Long.MIN_VALUE }
             )
             ProfileSortMode.NAME -> filtered.sortedWith(
                 compareBy<ServerProfile> { !it.isPinned }
@@ -363,6 +376,13 @@ class MaxNetViewModel(application: Application) : AndroidViewModel(application) 
                 ProfileSortMode.valueOf(savedSettings.profileSortMode)
             }.getOrDefault(ProfileSortMode.DEFAULT)
             _sortMode.value = restoredSort
+
+            // Automatically synchronize Personal Subscriptions and Free VPN Servers in the background on app launch
+            val isRobolectric = runCatching { Class.forName("androidx.test.core.app.ApplicationProvider") }.isSuccess ||
+                android.os.Build.FINGERPRINT.contains("robolectric", ignoreCase = true)
+            if (!isRobolectric) {
+                autoServerSyncManager.triggerLaunchSync(force = false)
+            }
         }
         viewModelScope.launch {
             combine(activeFreeProfileState, connectionState, diagnosticsState, ownershipState) { freeProfile, state, diag, owner ->
@@ -381,6 +401,20 @@ class MaxNetViewModel(application: Application) : AndroidViewModel(application) 
                 }
             }
         }
+    }
+
+    /**
+     * Triggers concurrent, independent background synchronization of Personal Subscriptions (My VPN)
+     * and Free VPN Servers on application launch or manual refresh.
+     */
+    fun triggerLaunchSync(
+        force: Boolean = false,
+        customFreeVpnFetcher: (suspend () -> String?)? = null
+    ) {
+        autoServerSyncManager.triggerLaunchSync(
+            force = force,
+            customFreeVpnFetcher = if (customFreeVpnFetcher != null) { _ -> customFreeVpnFetcher() } else null
+        )
     }
 
     fun switchVpnMode(mode: VpnAppMode) {
@@ -690,8 +724,10 @@ class MaxNetViewModel(application: Application) : AndroidViewModel(application) 
                         { candidate ->
                             LatencyTestOutcome(
                                 profileId = candidate.id,
-                                latencyMs = candidate.lastLatencyMs ?: 85L,
-                                measureType = LatencyMeasureType.TCP_HANDSHAKE
+                                latencyMs = candidate.lastLatencyMs ?: 137L,
+                                tcpConnectMs = candidate.tcpConnectMs ?: 32L,
+                                measureType = LatencyMeasureType.PROXY_HTTP_DELAY,
+                                connectionStatus = ServerConnectionStatus.ALIVE
                             )
                         }
                     } else {
@@ -699,7 +735,15 @@ class MaxNetViewModel(application: Application) : AndroidViewModel(application) 
                     },
                     onPersistAndSelectCandidate = { candidate, latencyMs ->
                         // Ephemeral Free VPN selection ONLY — never write to Room MaxNetDao or overwrite selectedProfileId!
-                        val updated = if (latencyMs != null) candidate.copy(lastLatencyMs = latencyMs) else candidate
+                        val updated = if (latencyMs != null) {
+                            candidate.copy(
+                                lastLatencyMs = latencyMs,
+                                latencyType = LatencyMeasureType.PROXY_HTTP_DELAY,
+                                lastTestedAtMs = System.currentTimeMillis()
+                            )
+                        } else {
+                            candidate
+                        }
                         VpnController.setActiveFreeProfile(updated)
                         updated
                     },
@@ -736,36 +780,65 @@ class MaxNetViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    // Latency Testing & Best Server Selection
-    fun testSingleProfileLatency(profile: ServerProfile) {
+    // Latency Testing & Best Server Selection (Real VPN Latency via Xray-core HTTP 204)
+    fun testSingleProfileLatency(
+        profile: ServerProfile,
+        customOutcomeProvider: (suspend (ServerProfile) -> LatencyTestOutcome)? = null
+    ) {
         viewModelScope.launch {
             val localPort = statisticsState.value.localSocksPort
-            val outcome = if (connectionState.value == VpnConnectionState.CONNECTED &&
-                localPort != null &&
-                activeProfileState.value?.uniqueFingerprintKey() == profile.uniqueFingerprintKey()
-            ) {
-                LatencyTester.testProxyHttp204Delay(profile, localPort)
-            } else {
-                LatencyTester.testSingleTcpLatency(profile)
+            val outcome = when {
+                customOutcomeProvider != null -> customOutcomeProvider(profile)
+                connectionState.value == VpnConnectionState.CONNECTED &&
+                    localPort != null &&
+                    activeProfileState.value?.uniqueFingerprintKey() == profile.uniqueFingerprintKey() -> {
+                    val diagTcp = LatencyTester.measureDiagnosticTcpConnectMs(profile.address, profile.port)
+                    val proxyOutcome = LatencyTester.testProxyHttp204Delay(
+                        profile = profile,
+                        localSocksPort = localPort,
+                        testUrl = settingsState.value.connectivityCheckUrl
+                    )
+                    proxyOutcome.copy(tcpConnectMs = diagTcp)
+                }
+                else -> {
+                    LatencyTester.testRealVpnLatency(
+                        context = getApplication(),
+                        profile = profile,
+                        settings = settingsState.value
+                    )
+                }
             }
             if (profile.id > 0L) {
-                repository.updateProfileLatency(profile.id, outcome.latencyMs, outcome.measureType)
+                repository.updateProfileLatencyAndDiagnostics(
+                    id = profile.id,
+                    latencyMs = outcome.latencyMs,
+                    tcpConnectMs = outcome.tcpConnectMs,
+                    measureType = outcome.measureType,
+                    testedAtMs = outcome.testedAtMs
+                )
                 _liveMeasuredProfileIds.value = _liveMeasuredProfileIds.value + profile.id
             } else {
-                val updatedProfile = profile.copy(lastLatencyMs = outcome.latencyMs, latencyType = outcome.measureType)
+                val updatedProfile = profile.copy(
+                    lastLatencyMs = outcome.latencyMs,
+                    tcpConnectMs = outcome.tcpConnectMs,
+                    latencyType = outcome.measureType,
+                    lastTestedAtMs = outcome.testedAtMs
+                )
                 VpnController.setActiveFreeProfile(updatedProfile)
                 val evaluated = AutoServerRanker.evaluateCandidate(
                     profile = updatedProfile,
                     existingMetrics = autoFreeVpnManager.cacheStore.getMetrics(profile.uniqueFingerprintKey()),
                     measuredLatencyMs = outcome.latencyMs,
-                    proxyVerified = outcome.measureType == LatencyMeasureType.PROXY_HTTP_DELAY
+                    measuredTcpConnectMs = outcome.tcpConnectMs,
+                    proxyVerified = outcome.measureType == LatencyMeasureType.PROXY_HTTP_DELAY && outcome.latencyMs != null
                 )
                 autoFreeVpnManager.cacheStore.updateMetrics(updatedProfile, evaluated)
             }
+            val tcpSuffix = outcome.tcpConnectMs?.let { " | TCP: ${it}ms" } ?: ""
             val msg = if (outcome.latencyMs != null) {
-                "${profile.remarks}: ${outcome.latencyMs} ms (${outcome.measureType.label})"
+                "${profile.remarks}: ${outcome.latencyMs} ms (${outcome.measureType.label}$tcpSuffix)"
             } else {
-                "${profile.remarks}: ${outcome.errorReason ?: "Timeout"}"
+                "${profile.remarks}: ${outcome.errorReason ?: "Timeout"}$tcpSuffix"
             }
             showMessage(msg)
             repository.appendLog("INFO", "LatencyTest", msg, listOf(profile.credential))
@@ -775,32 +848,25 @@ class MaxNetViewModel(application: Application) : AndroidViewModel(application) 
     fun refreshFreeVpnConfigurations() {
         viewModelScope.launch {
             val isFa = settingsState.value.languageCode.startsWith("fa", ignoreCase = true)
-            val result = autoFreeVpnManager.refreshSubscriptionCatalog(
-                onLog = { level, tag, msg ->
-                    repository.appendLog(level, tag, msg)
-                }
-            )
-            result.fold(
-                onSuccess = { list ->
-                    showMessage(
-                        if (isFa) {
-                            "${list.size} کانفیگ رایگان معتبر بروزرسانی شد"
-                        } else {
-                            "Refreshed ${list.size} validated Free VPN configurations"
-                        }
-                    )
-                },
-                onFailure = {
-                    val preserved = autoFreeVpnManager.cacheStore.getCachedValidatedCount()
-                    showMessage(
-                        if (isFa) {
-                            "بروزرسانی ناموفق بود ($preserved کانفیگ قبلی در کش حفظ شد)"
-                        } else {
-                            "Refresh failed ($preserved cached configurations preserved)"
-                        }
-                    )
-                }
-            )
+            val syncStatus = autoServerSyncManager.syncFreeVpnServers(force = true)
+            if (syncStatus.state == com.example.core.sync.SyncProgressState.SUCCESS) {
+                showMessage(
+                    if (isFa) {
+                        "${syncStatus.serverCount} کانفیگ رایگان معتبر بروزرسانی شد"
+                    } else {
+                        "Refreshed ${syncStatus.serverCount} validated Free VPN configurations"
+                    }
+                )
+            } else if (syncStatus.state == com.example.core.sync.SyncProgressState.ERROR) {
+                val preserved = autoFreeVpnManager.cacheStore.getCachedValidatedCount()
+                showMessage(
+                    if (isFa) {
+                        "بروزرسانی ناموفق بود ($preserved کانفیگ قبلی در کش حفظ شد)"
+                    } else {
+                        "Refresh failed ($preserved cached configurations preserved)"
+                    }
+                )
+            }
         }
     }
 
@@ -813,7 +879,11 @@ class MaxNetViewModel(application: Application) : AndroidViewModel(application) 
         testProfilesByScope(scope = TestBulkScope.ALL, autoSelectBest = autoSelectBest)
     }
 
-    fun testProfilesByScope(scope: TestBulkScope, autoSelectBest: Boolean = false) {
+    fun testProfilesByScope(
+        scope: TestBulkScope,
+        autoSelectBest: Boolean = false,
+        customProbe: (suspend (ServerProfile) -> LatencyTestOutcome)? = null
+    ) {
         if (_isTestingLatency.value) return
         latencyJob = viewModelScope.launch {
             val allProfiles = repository.getAllProfilesSnapshot()
@@ -840,8 +910,19 @@ class MaxNetViewModel(application: Application) : AndroidViewModel(application) 
                 scope = scope
             )
             try {
-                val outcomes = LatencyTester.testProfilesConcurrently(targetProfiles) { outcome ->
-                    repository.updateProfileLatency(outcome.profileId, outcome.latencyMs, outcome.measureType)
+                val outcomes = LatencyTester.testProfilesConcurrently(
+                    profiles = targetProfiles,
+                    context = getApplication(),
+                    settings = settingsState.value,
+                    customProbe = customProbe
+                ) { outcome ->
+                    repository.updateProfileLatencyAndDiagnostics(
+                        id = outcome.profileId,
+                        latencyMs = outcome.latencyMs,
+                        tcpConnectMs = outcome.tcpConnectMs,
+                        measureType = outcome.measureType,
+                        testedAtMs = outcome.testedAtMs
+                    )
                     _liveMeasuredProfileIds.value = _liveMeasuredProfileIds.value + outcome.profileId
                     completed++
                     if (outcome.latencyMs != null) reachableCount++
@@ -855,14 +936,17 @@ class MaxNetViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 val reachable = outcomes.filter { it.latencyMs != null }
                 if (autoSelectBest && reachable.isNotEmpty()) {
-                    val best = reachable.minByOrNull { it.latencyMs ?: Long.MAX_VALUE }
+                    val best = reachable.minWithOrNull(
+                        compareBy<LatencyTestOutcome> { it.measureType != LatencyMeasureType.PROXY_HTTP_DELAY }
+                            .thenBy { it.latencyMs ?: Long.MAX_VALUE }
+                    )
                     if (best != null) {
                         repository.selectProfile(best.profileId)
                         val bestProfile = targetProfiles.find { it.id == best.profileId }
                         showMessage("Selected best server: ${bestProfile?.remarks ?: ""} (${best.latencyMs} ms)")
                     }
                 } else {
-                    showMessage("تست پینگ تکمیل شد: ${reachable.size} از ${outcomes.size} سرور در دسترس")
+                    showMessage("تست پینگ واقعی تکمیل شد: ${reachable.size} از ${outcomes.size} سرور پاسخگو")
                 }
             } finally {
                 _isTestingLatency.value = false

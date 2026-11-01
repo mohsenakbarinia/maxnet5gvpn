@@ -28,9 +28,19 @@ object LogRedactor {
         pattern = "https?://[^\\s\"']*workers\\.dev[^\\s\"']*",
         option = RegexOption.IGNORE_CASE
     )
+    private val maxnetSubUrlRegex = Regex(
+        pattern = "https?://[^\\s\"']*maxnet6g\\.ir[^\\s\"']*",
+        option = RegexOption.IGNORE_CASE
+    )
+    private val acmeTokenRegex = Regex(
+        pattern = "\\bacme[0-9a-zA-Z]{10,24}\\b",
+        option = RegexOption.IGNORE_CASE
+    )
 
     fun redact(raw: String, knownSecrets: Collection<String> = emptyList()): String {
         var sanitized = raw
+        sanitized = maxnetSubUrlRegex.replace(sanitized, "[REDACTED-SUBSCRIPTION-URL]")
+        sanitized = acmeTokenRegex.replace(sanitized, "[REDACTED-TOKEN]")
         sanitized = workersDevUrlRegex.replace(sanitized, "[REDACTED-SUBSCRIPTION-URL]")
         sanitized = uuidRegex.replace(sanitized, "[REDACTED-UUID]")
         sanitized = uriCredentialRegex.replace(sanitized) { match ->

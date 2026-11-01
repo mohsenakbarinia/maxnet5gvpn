@@ -41,6 +41,20 @@ interface MaxNetDao {
     @Query("UPDATE profiles SET lastLatencyMs = :latencyMs, latencyType = :measureType WHERE id = :id")
     suspend fun updateProfileLatency(id: Long, latencyMs: Long?, measureType: String)
 
+    @Query(
+        "UPDATE profiles SET lastLatencyMs = :latencyMs, tcpConnectMs = COALESCE(:tcpConnectMs, tcpConnectMs), latencyType = :measureType, lastTestedAtMs = :testedAtMs WHERE id = :id"
+    )
+    suspend fun updateProfileLatencyAndDiagnostics(
+        id: Long,
+        latencyMs: Long?,
+        tcpConnectMs: Long?,
+        measureType: String,
+        testedAtMs: Long = System.currentTimeMillis()
+    )
+
+    @Update
+    suspend fun updateProfiles(profiles: List<ProfileEntity>)
+
     // Subscriptions
     @Query("SELECT * FROM subscriptions ORDER BY id DESC")
     fun observeAllSubscriptions(): Flow<List<SubscriptionEntity>>
@@ -65,6 +79,33 @@ interface MaxNetDao {
     ) {
         deleteProfilesBySubscriptionId(subscriptionId)
         insertProfiles(newProfiles)
+        updateSubscription(updatedSubscription)
+    }
+
+    /**
+     * In-place transactional synchronization for a personal subscription:
+     * 1. Updates existing subscription profiles in-place (preserving database ID, favorite/pinned status,
+     *    user-customized remarks, and measured latency diagnostics).
+     * 2. Inserts newly discovered subscription profiles.
+     * 3. Removes only obsolete profiles belonging to this subscription that were removed upstream.
+     * 4. Never touches manually imported profiles (subscriptionId == null) or other subscriptions.
+     */
+    @Transaction
+    suspend fun syncSubscriptionProfilesInPlaceTransaction(
+        profilesToUpdateInPlace: List<ProfileEntity>,
+        profilesToInsertNew: List<ProfileEntity>,
+        obsoleteProfileIdsToDelete: List<Long>,
+        updatedSubscription: SubscriptionEntity
+    ) {
+        if (obsoleteProfileIdsToDelete.isNotEmpty()) {
+            deleteProfilesByIds(obsoleteProfileIdsToDelete)
+        }
+        if (profilesToUpdateInPlace.isNotEmpty()) {
+            updateProfiles(profilesToUpdateInPlace)
+        }
+        if (profilesToInsertNew.isNotEmpty()) {
+            insertProfiles(profilesToInsertNew)
+        }
         updateSubscription(updatedSubscription)
     }
 

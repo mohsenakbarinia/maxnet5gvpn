@@ -108,8 +108,11 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.R
+import com.example.core.sync.CategorySyncStatus
+import com.example.core.sync.SyncProgressState
 import com.example.domain.model.LatencyMeasureType
 import com.example.domain.model.SecurityType
+import com.example.domain.model.ServerConnectionStatus
 import com.example.domain.model.ServerProfile
 import com.example.domain.model.TransportType
 import com.example.domain.model.VpnConnectionState
@@ -161,6 +164,7 @@ fun ProfilesScreen(
     availableCountries: List<ResolvedServerLocation> = emptyList(),
     latencyTestProgress: LatencyTestProgress = LatencyTestProgress(isTesting = isTestingLatency),
     liveMeasuredProfileIds: Set<Long> = emptySet(),
+    personalSyncStatus: CategorySyncStatus = CategorySyncStatus(category = "PERSONAL"),
     onSearchQueryChange: (String) -> Unit,
     onProtocolFilterChange: (VpnProtocol?) -> Unit,
     onGroupFilterChange: (String?) -> Unit,
@@ -1171,6 +1175,42 @@ fun ProfilesScreen(
                 }
             }
 
+            // Non-intrusive Automatic Personal Subscription Sync Banner
+            if (personalSyncStatus.state == SyncProgressState.SYNCING) {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 3.dp)
+                        .testTag("personal_auto_sync_banner"),
+                    shape = RoundedCornerShape(10.dp),
+                    color = ProfileRowSurface,
+                    border = BorderStroke(1.dp, ProfileAccentCyan.copy(alpha = 0.35f))
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = personalSyncStatus.messageFa.ifBlank { "در حال بروزرسانی اشتراک‌های شخصی..." },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = ProfileAccentCyan,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        LinearProgressIndicator(
+                            modifier = Modifier
+                                .width(64.dp)
+                                .height(3.dp)
+                                .clip(RoundedCornerShape(2.dp)),
+                            color = ProfileAccentCyan,
+                            trackColor = ProfileDividerColor
+                        )
+                    }
+                }
+            }
+
             // Bulk Selection Bar (when user selects profiles for bulk test or deletion)
             if (selectedBulkIds.isNotEmpty()) {
                 Surface(
@@ -1619,30 +1659,33 @@ private fun CompactProfileRow(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(2.dp)
             ) {
-                // SECTION 8: LATENCY DISPLAY (Green / Cyan / Amber / Red / Gray) + Live vs Cached distinction
-                val latencyMs = profile.lastLatencyMs
+                // SECTION 8: REAL VPN LATENCY DISPLAY (Primary) + SEPARATE DIAGNOSTIC METRICS (TCP Connect & Connection Status)
+                val realLatencyMs = profile.realVpnLatencyMs
+                val displayLatencyMs = realLatencyMs ?: profile.lastLatencyMs
+                val isProxyVerified = profile.latencyType == LatencyMeasureType.PROXY_HTTP_DELAY && realLatencyMs != null
+                val connStatus = profile.connectionStatus
+
                 val latencyColor = when {
-                    latencyMs != null && latencyMs < 120L -> ProfileConnectedGreen // Excellent: green
-                    latencyMs != null && latencyMs <= 220L -> ProfileAccentCyan    // Good: cyan
-                    latencyMs != null && latencyMs <= 450L -> AmberWarning         // Moderate: amber
-                    latencyMs != null -> CoralError                                // Poor: red
-                    profile.latencyType == LatencyMeasureType.TIMEOUT -> CoralError // Failed: red
-                    else -> ProfileSecondaryText                                   // Untested: gray
+                    displayLatencyMs != null && displayLatencyMs < 160L -> ProfileConnectedGreen // Excellent: green
+                    displayLatencyMs != null && displayLatencyMs <= 280L -> ProfileAccentCyan    // Good: cyan
+                    displayLatencyMs != null && displayLatencyMs <= 550L -> AmberWarning         // Moderate: amber
+                    displayLatencyMs != null -> CoralError                                       // Poor: red
+                    connStatus == ServerConnectionStatus.FAILED -> CoralError                    // Failed: red
+                    else -> ProfileSecondaryText                                                 // Untested: gray
                 }
 
                 val latencyLabel = when {
-                    latencyMs != null -> "${LocalizationHelper.formatDigits(latencyMs.toString(), usePersianDigits)} ms"
-                    profile.latencyType == LatencyMeasureType.TIMEOUT -> "ناموفق"
+                    displayLatencyMs != null -> "${LocalizationHelper.formatDigits(displayLatencyMs.toString(), usePersianDigits)} ms"
+                    connStatus == ServerConnectionStatus.FAILED -> "ناموفق"
                     else -> "-- ms"
                 }
 
                 val measurementSubLabel = when {
-                    latencyMs != null && profile.latencyType == LatencyMeasureType.PROXY_HTTP_DELAY ->
-                        if (isLiveMeasured) "● HTTP" else "ذخیره"
-                    latencyMs != null ->
-                        if (isLiveMeasured) "● زنده" else "ذخیره"
-                    profile.latencyType == LatencyMeasureType.TIMEOUT -> "خطا"
-                    else -> "تست پینگ"
+                    isProxyVerified -> if (isLiveMeasured) "● HTTP 204" else "HTTP 204"
+                    displayLatencyMs != null && profile.latencyType == LatencyMeasureType.TCP_HANDSHAKE -> "TCP"
+                    displayLatencyMs != null -> if (isLiveMeasured) "● زنده" else "ذخیره"
+                    connStatus == ServerConnectionStatus.FAILED -> "خطای پروکسی"
+                    else -> "تست واقعی"
                 }
 
                 Surface(
@@ -1673,6 +1716,18 @@ private fun CompactProfileRow(
                             fontSize = 9.sp,
                             color = latencyColor.copy(alpha = 0.85f)
                         )
+                        profile.tcpConnectMs?.let { tcpMs ->
+                            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                                Text(
+                                    text = "TCP: ${LocalizationHelper.formatDigits(tcpMs.toString(), usePersianDigits)}ms",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontFamily = JetBrainsMonoFontFamily,
+                                    fontSize = 8.sp,
+                                    color = ProfileSecondaryText,
+                                    modifier = Modifier.testTag("tcp_diag_${profile.id}")
+                                )
+                            }
+                        }
                     }
                 }
 

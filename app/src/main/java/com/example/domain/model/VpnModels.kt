@@ -98,9 +98,16 @@ enum class VpnConnectionState {
 
 enum class LatencyMeasureType(val label: String) {
     UNTESTED("Untested"),
-    TCP_HANDSHAKE("TCP Handshake"),
-    PROXY_HTTP_DELAY("Proxy 204 Delay"),
-    TIMEOUT("Timeout")
+    TCP_HANDSHAKE("TCP Connect"),
+    PROXY_HTTP_DELAY("Real VPN Latency"),
+    TIMEOUT("Failed")
+}
+
+enum class ServerConnectionStatus(val labelEn: String, val labelFa: String) {
+    UNTESTED("Untested", "تست‌نشده"),
+    TESTING("Testing...", "در حال تست..."),
+    ALIVE("Usable Proxy", "متصل / سالم"),
+    FAILED("Unreachable", "ناموفق / خطا")
 }
 
 enum class ThemePreference {
@@ -143,9 +150,44 @@ data class ServerProfile(
     val isPinned: Boolean = false,
     val sortOrder: Int = 0,
     val lastLatencyMs: Long? = null,
+    val tcpConnectMs: Long? = null,
     val latencyType: LatencyMeasureType = LatencyMeasureType.UNTESTED,
+    val lastTestedAtMs: Long? = null,
+    val userCustomizedRemarks: Boolean = false,
     val createdAt: Long = System.currentTimeMillis()
 ) {
+    val connectionStatus: ServerConnectionStatus
+        get() = when {
+            latencyType == LatencyMeasureType.PROXY_HTTP_DELAY && lastLatencyMs != null && lastLatencyMs > 0L ->
+                ServerConnectionStatus.ALIVE
+            latencyType == LatencyMeasureType.TIMEOUT ->
+                ServerConnectionStatus.FAILED
+            lastLatencyMs != null && lastLatencyMs > 0L ->
+                ServerConnectionStatus.ALIVE
+            else ->
+                ServerConnectionStatus.UNTESTED
+        }
+
+    /**
+     * Primary Real VPN Latency (HTTP request-response time through Xray outbound).
+     * Never returns a raw TCP handshake value as Real VPN Latency.
+     */
+    val realVpnLatencyMs: Long?
+        get() = when {
+            latencyType == LatencyMeasureType.PROXY_HTTP_DELAY && lastLatencyMs != null && lastLatencyMs > 0L ->
+                lastLatencyMs
+            latencyType == LatencyMeasureType.TCP_HANDSHAKE ->
+                null
+            else ->
+                lastLatencyMs?.takeIf { it > 0L }
+        }
+
+    /**
+     * Separate diagnostic TCP Connect time (server:port socket handshake).
+     */
+    val diagnosticTcpConnectMs: Long?
+        get() = tcpConnectMs ?: if (latencyType == LatencyMeasureType.TCP_HANDSHAKE) lastLatencyMs else null
+
     fun uniqueFingerprintKey(): String {
         return "${protocol.name}|${address.trim().lowercase()}|$port|${credential.trim()}|${network.wireName}|${security.wireName}|${host.trim().lowercase()}|${path.trim()}|${serviceName.trim()}|${sni.trim().lowercase()}|${realityPublicKey.trim()}|${realityShortId.trim()}"
     }
@@ -219,7 +261,9 @@ data class SubscriptionItem(
     val supportUrl: String = "",
     val webPageUrl: String = "",
     val announcement: String = "",
-    val profileCount: Int = 0
+    val profileCount: Int = 0,
+    val etag: String = "",
+    val lastModifiedHeader: String = ""
 )
 
 enum class RoutingRuleType(val displayName: String) {
@@ -278,7 +322,9 @@ data class AppSettings(
     val autoReconnect: Boolean = true,
     val connectOnBoot: Boolean = false,
     val onboardingCompleted: Boolean = true,
-    val profileSortMode: String = "DEFAULT"
+    val profileSortMode: String = "DEFAULT",
+    val connectivityCheckUrl: String = "https://www.gstatic.com/generate_204",
+    val connectivityFallbackUrl: String = "https://cp.cloudflare.com/generate_204"
 )
 
 enum class QualityTestStage {

@@ -267,6 +267,77 @@ object XrayConfigBuilder {
         )
     }
 
+    /**
+     * Builds an isolated, temporary Xray-core configuration with a dedicated loopback SOCKS5 inbound
+     * (`127.0.0.1:[localSocksPort]`) and GLOBAL proxy routing for real end-to-end HTTP 204 latency testing.
+     * Excludes the secondary HTTP inbound port and TUN inbound so multiple test instances can run
+     * concurrently without port collisions or interfering with an active VPN connection.
+     */
+    fun buildTemporaryProxyTestConfig(
+        profile: ServerProfile,
+        settings: AppSettings = AppSettings(),
+        localSocksPort: Int
+    ): ValidationResult {
+        val testSettings = settings.copy(
+            routingMode = RoutingMode.GLOBAL,
+            enableFakeDns = false
+        )
+        val full = buildAndValidate(
+            profile = profile,
+            settings = testSettings,
+            customRules = emptyList(),
+            localSocksPort = localSocksPort,
+            includeNativeTunInbound = false,
+            verifyWithHostBinary = false
+        )
+        if (!full.isValid) return full
+
+        val socksInbound = JSONObject().apply {
+            put("tag", "socks-in")
+            put("port", localSocksPort)
+            put("listen", "127.0.0.1")
+            put("protocol", "socks")
+            put(
+                "settings",
+                JSONObject().apply {
+                    put("auth", "noauth")
+                    put("udp", true)
+                    put("userLevel", 8)
+                }
+            )
+            put(
+                "sniffing",
+                JSONObject().apply {
+                    put("enabled", true)
+                    put("destOverride", JSONArray().put("http").put("tls").put("quic"))
+                    put("routeOnly", true)
+                }
+            )
+        }
+
+        val root = JSONObject().apply {
+            put("remarks", "test-${profile.remarks}")
+            put(
+                "log",
+                JSONObject().apply {
+                    put("loglevel", "none")
+                    put("dnsLog", false)
+                }
+            )
+            put("dns", buildDnsObject(profile, testSettings))
+            put("inbounds", JSONArray().put(socksInbound))
+            put("outbounds", buildOutboundsArray(profile, testSettings))
+            put("routing", buildRoutingObject(profile, testSettings, emptyList()))
+        }
+
+        return ValidationResult(
+            isValid = true,
+            errors = emptyList(),
+            warnings = full.warnings,
+            generatedConfigJson = root.toString(2)
+        )
+    }
+
     private fun countryDomainRules(countryCode: String): JSONArray {
         return when (val cc = countryCode.trim().lowercase()) {
             "ir" -> JSONArray().put("domain:ir").put("geosite:category-ir")

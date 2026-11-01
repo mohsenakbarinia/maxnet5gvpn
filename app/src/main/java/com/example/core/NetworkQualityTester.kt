@@ -56,8 +56,8 @@ object NetworkQualityTester {
             currentCoroutineContext().ensureActive()
 
             // STEP 1: Verify VPN Tunnel / Local SOCKS5 or Endpoint Socket
-            val tunnelOk = if (testedViaVpn && localSocksPort != null) {
-                verifyLocalSocks5Handshake(localSocksPort)
+            val tunnelOk = if (testedViaVpn) {
+                verifyLocalSocks5Handshake(localSocksPort!!)
             } else {
                 false
             }
@@ -75,7 +75,7 @@ object NetworkQualityTester {
             var internetOk = false
             var errorNote: String? = null
 
-            if (testedViaVpn && localSocksPort != null && profile != null) {
+            if (testedViaVpn && profile != null) {
                 if (!tunnelOk) {
                     return@withContext report.copy(
                         stage = QualityTestStage.FAILED,

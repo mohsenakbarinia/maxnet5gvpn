@@ -56,7 +56,10 @@ data class ProfileEntity(
     val isPinned: Boolean = false,
     val sortOrder: Int = 0,
     val lastLatencyMs: Long? = null,
+    val tcpConnectMs: Long? = null,
     val latencyType: String = LatencyMeasureType.UNTESTED.name,
+    val lastTestedAtMs: Long? = null,
+    val userCustomizedRemarks: Boolean = false,
     val createdAt: Long = System.currentTimeMillis()
 ) {
     fun toDomain(): ServerProfile {
@@ -92,7 +95,10 @@ data class ProfileEntity(
             isPinned = isPinned,
             sortOrder = sortOrder,
             lastLatencyMs = lastLatencyMs,
+            tcpConnectMs = tcpConnectMs,
             latencyType = runCatching { LatencyMeasureType.valueOf(latencyType) }.getOrDefault(LatencyMeasureType.UNTESTED),
+            lastTestedAtMs = lastTestedAtMs,
+            userCustomizedRemarks = userCustomizedRemarks,
             createdAt = createdAt
         )
     }
@@ -131,7 +137,10 @@ data class ProfileEntity(
                 isPinned = profile.isPinned,
                 sortOrder = profile.sortOrder,
                 lastLatencyMs = profile.lastLatencyMs,
+                tcpConnectMs = profile.tcpConnectMs,
                 latencyType = profile.latencyType.name,
+                lastTestedAtMs = profile.lastTestedAtMs,
+                userCustomizedRemarks = profile.userCustomizedRemarks,
                 createdAt = profile.createdAt
             )
         }
@@ -154,7 +163,9 @@ data class SubscriptionEntity(
     val supportUrl: String = "",
     val webPageUrl: String = "",
     val announcement: String = "",
-    val profileCount: Int = 0
+    val profileCount: Int = 0,
+    val etag: String = "",
+    val lastModifiedHeader: String = ""
 ) {
     fun toDomain(): SubscriptionItem {
         return SubscriptionItem(
@@ -172,7 +183,9 @@ data class SubscriptionEntity(
             supportUrl = supportUrl,
             webPageUrl = webPageUrl,
             announcement = announcement,
-            profileCount = profileCount
+            profileCount = profileCount,
+            etag = etag,
+            lastModifiedHeader = lastModifiedHeader
         )
     }
 
@@ -193,7 +206,9 @@ data class SubscriptionEntity(
                 supportUrl = item.supportUrl,
                 webPageUrl = item.webPageUrl,
                 announcement = item.announcement,
-                profileCount = item.profileCount
+                profileCount = item.profileCount,
+                etag = item.etag,
+                lastModifiedHeader = item.lastModifiedHeader
             )
         }
     }

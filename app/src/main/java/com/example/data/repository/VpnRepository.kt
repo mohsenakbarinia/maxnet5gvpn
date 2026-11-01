@@ -101,8 +101,16 @@ class VpnRepository(
         if (profile.groupName.isNotBlank() && profile.groupName != "Default") {
             dao.insertGroup(ProfileGroupEntity(name = profile.groupName.trim()))
         }
-        val id = dao.insertProfile(ProfileEntity.fromDomain(profile))
-        appendLog("INFO", "ProfileManager", "Saved profile '${profile.remarks}' (${profile.protocol.displayName})", listOf(profile.credential))
+        val effectiveProfile = if (profile.id > 0L) {
+            val existing = dao.getProfileById(profile.id)?.toDomain()
+            val customizedRemarks = existing != null &&
+                (existing.userCustomizedRemarks || (existing.subscriptionId != null && existing.remarks != profile.remarks))
+            profile.copy(userCustomizedRemarks = customizedRemarks)
+        } else {
+            profile
+        }
+        val id = dao.insertProfile(ProfileEntity.fromDomain(effectiveProfile))
+        appendLog("INFO", "ProfileManager", "Saved profile '${effectiveProfile.remarks}' (${effectiveProfile.protocol.displayName})", listOf(effectiveProfile.credential))
         id
     }
 
@@ -138,8 +146,28 @@ class VpnRepository(
         dao.updateProfileLatency(id, latencyMs, measureType.name)
     }
 
+    suspend fun updateProfileLatencyAndDiagnostics(
+        id: Long,
+        latencyMs: Long?,
+        tcpConnectMs: Long?,
+        measureType: LatencyMeasureType,
+        testedAtMs: Long = System.currentTimeMillis()
+    ) = withContext(Dispatchers.IO) {
+        dao.updateProfileLatencyAndDiagnostics(
+            id = id,
+            latencyMs = latencyMs,
+            tcpConnectMs = tcpConnectMs,
+            measureType = measureType.name,
+            testedAtMs = testedAtMs
+        )
+    }
+
     suspend fun getAllProfilesSnapshot(): List<ServerProfile> = withContext(Dispatchers.IO) {
         dao.getAllProfilesSnapshot().map { it.toDomain() }
+    }
+
+    suspend fun getAllSubscriptionsSnapshot(): List<SubscriptionItem> = withContext(Dispatchers.IO) {
+        dao.getAllSubscriptionsSnapshot().map { it.toDomain() }
     }
 
     suspend fun importBatchText(

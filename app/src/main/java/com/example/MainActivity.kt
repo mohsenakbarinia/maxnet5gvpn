@@ -196,6 +196,7 @@ fun MaxNetAppRoot(viewModel: MaxNetViewModel) {
     val subscriptionImportReport by viewModel.subscriptionImportReportState.collectAsStateWithLifecycle()
     val qualityReport by viewModel.qualityReportState.collectAsStateWithLifecycle()
     val autoVpnStatus by viewModel.autoVpnStatusState.collectAsStateWithLifecycle()
+    val dualSyncState by viewModel.dualSyncState.collectAsStateWithLifecycle()
 
     var currentTab by rememberSaveable { mutableStateOf(MaxNetDestination.HOME) }
 
@@ -365,6 +366,7 @@ fun MaxNetAppRoot(viewModel: MaxNetViewModel) {
                                 diagnostics = diagnostics,
                                 qualityReport = qualityReport,
                                 autoVpnStatus = autoVpnStatus,
+                                dualSyncState = dualSyncState,
                                 speedHistory = speedHistory,
                                 settings = settings,
                                 onSwitchVpnMode = viewModel::switchVpnMode,
@@ -403,6 +405,7 @@ fun MaxNetAppRoot(viewModel: MaxNetViewModel) {
                                 availableCountries = availableCountries,
                                 latencyTestProgress = latencyTestProgress,
                                 liveMeasuredProfileIds = liveMeasuredProfileIds,
+                                personalSyncStatus = dualSyncState.personalStatus,
                                 onSearchQueryChange = viewModel::setSearchQuery,
                                 onProtocolFilterChange = viewModel::setProtocolFilter,
                                 onGroupFilterChange = viewModel::setGroupFilter,

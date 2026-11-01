@@ -66,12 +66,14 @@ object AutoServerRanker {
 
     /**
      * Evaluates a single candidate profile and returns updated [CandidateQualityMetrics] with composite score [0.0 .. 100.0].
+     * Primary ranking uses **Real VPN Latency** (`measuredLatencyMs`), keeping diagnostic [measuredTcpConnectMs] separate.
      */
     fun evaluateCandidate(
         profile: ServerProfile,
         existingMetrics: CandidateQualityMetrics? = null,
         measuredLatencyMs: Long? = profile.lastLatencyMs,
-        proxyVerified: Boolean = existingMetrics?.proxyVerified ?: false,
+        measuredTcpConnectMs: Long? = profile.tcpConnectMs ?: existingMetrics?.tcpConnectMs,
+        proxyVerified: Boolean = existingMetrics?.proxyVerified ?: (profile.latencyType == com.example.domain.model.LatencyMeasureType.PROXY_HTTP_DELAY && profile.lastLatencyMs != null),
         measuredDownloadBps: Long? = existingMetrics?.downloadBps,
         nowMs: Long = System.currentTimeMillis()
     ): CandidateQualityMetrics {
@@ -109,6 +111,7 @@ object AutoServerRanker {
                 protocol = profile.protocol,
                 isReality = isReality,
                 latencyMs = effectiveLatency,
+                tcpConnectMs = measuredTcpConnectMs,
                 proxyVerified = proxyVerified,
                 downloadBps = measuredDownloadBps,
                 successCount = prevSuccess,
@@ -123,17 +126,16 @@ object AutoServerRanker {
             )
         }
 
-        // 1. Connection Success Score (0..25 pts)
+        // 1. Connection Success Score (0..25 pts) — strongly prioritizes verified Real VPN Latency (HTTP 204 over Xray)
         val connectionSuccessPoints = when {
             proxyVerified && isReachable -> 25.0
-            isReachable -> 20.0
+            isReachable -> 18.0
             prevSuccess > 0 -> 8.0
             else -> 0.0
         }
 
-        // 2. Latency Score (0..30 pts) — lower latency yields higher score
+        // 2. Real VPN Latency Score (0..30 pts) — lower Real VPN Latency yields higher score
         val latencyPoints = if (effectiveLatency != null && effectiveLatency > 0) {
-            // 60ms -> ~27.4 pts, 150ms -> ~23.9 pts, 350ms -> ~17.8 pts, 800ms -> ~9.0 pts
             30.0 * exp(-effectiveLatency.toDouble() / 650.0)
         } else {
             0.0
@@ -141,11 +143,9 @@ object AutoServerRanker {
 
         // 3. Download Performance Score (0..15 pts)
         val downloadPoints = if (measuredDownloadBps != null && measuredDownloadBps > 0) {
-            // Normalize against 2 MB/s (2_000_000 B/s) for full 15 points
             val ratio = (measuredDownloadBps.toDouble() / 2_000_000.0).coerceIn(0.0, 1.0)
             4.0 + 11.0 * ratio
         } else if (isReachable) {
-            // Neutral baseline when only latency has been tested so far
             7.5
         } else {
             0.0
@@ -192,6 +192,7 @@ object AutoServerRanker {
             protocol = profile.protocol,
             isReality = isReality,
             latencyMs = effectiveLatency,
+            tcpConnectMs = measuredTcpConnectMs,
             proxyVerified = proxyVerified,
             downloadBps = measuredDownloadBps,
             successCount = prevSuccess,
@@ -213,12 +214,14 @@ object AutoServerRanker {
         profile: ServerProfile,
         existing: CandidateQualityMetrics?,
         verifiedLatencyMs: Long?,
+        tcpConnectMs: Long? = profile.tcpConnectMs ?: existing?.tcpConnectMs,
         downloadBps: Long? = existing?.downloadBps,
         nowMs: Long = System.currentTimeMillis()
     ): CandidateQualityMetrics {
         val base = existing ?: evaluateCandidate(profile, nowMs = nowMs)
         val updated = base.copy(
             latencyMs = verifiedLatencyMs ?: base.latencyMs,
+            tcpConnectMs = tcpConnectMs ?: base.tcpConnectMs,
             proxyVerified = true,
             downloadBps = downloadBps ?: base.downloadBps,
             successCount = base.successCount + 1,
@@ -230,6 +233,7 @@ object AutoServerRanker {
             profile = profile,
             existingMetrics = updated,
             measuredLatencyMs = updated.latencyMs,
+            measuredTcpConnectMs = updated.tcpConnectMs,
             proxyVerified = true,
             measuredDownloadBps = updated.downloadBps,
             nowMs = nowMs
@@ -243,6 +247,7 @@ object AutoServerRanker {
     fun recordConnectionFailure(
         profile: ServerProfile,
         existing: CandidateQualityMetrics?,
+        tcpConnectMs: Long? = profile.tcpConnectMs ?: existing?.tcpConnectMs,
         nowMs: Long = System.currentTimeMillis()
     ): CandidateQualityMetrics {
         val base = existing ?: evaluateCandidate(profile, nowMs = nowMs)
@@ -251,6 +256,7 @@ object AutoServerRanker {
         val shift = (newConsecutive - 1).coerceIn(0, 4)
         val cooldownDurationMs = min(30_000L * (1L shl shift), 10 * 60_000L)
         val updated = base.copy(
+            tcpConnectMs = tcpConnectMs ?: base.tcpConnectMs,
             proxyVerified = false,
             failureCount = base.failureCount + 1,
             consecutiveFailures = newConsecutive,
@@ -260,6 +266,7 @@ object AutoServerRanker {
             profile = profile,
             existingMetrics = updated,
             measuredLatencyMs = null,
+            measuredTcpConnectMs = updated.tcpConnectMs,
             proxyVerified = false,
             measuredDownloadBps = updated.downloadBps,
             nowMs = nowMs
@@ -267,7 +274,8 @@ object AutoServerRanker {
     }
 
     /**
-     * Ranks a collection of candidate profiles in descending order of composite quality score.
+     * Ranks a collection of candidate profiles in descending order of composite quality score
+     * and Real VPN Latency (`latencyMs`).
      * Excludes candidates currently on failure cooldown unless all candidates are on cooldown.
      */
     fun rankCandidates(
@@ -286,7 +294,8 @@ object AutoServerRanker {
                     profile = profile,
                     existingMetrics = existing,
                     measuredLatencyMs = profile.lastLatencyMs ?: existing?.latencyMs,
-                    proxyVerified = existing?.proxyVerified ?: false,
+                    measuredTcpConnectMs = profile.tcpConnectMs ?: existing?.tcpConnectMs,
+                    proxyVerified = existing?.proxyVerified ?: (profile.latencyType == com.example.domain.model.LatencyMeasureType.PROXY_HTTP_DELAY && profile.lastLatencyMs != null),
                     measuredDownloadBps = existing?.downloadBps,
                     nowMs = nowMs
                 )

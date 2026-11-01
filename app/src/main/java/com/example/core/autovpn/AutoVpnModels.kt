@@ -53,7 +53,9 @@ data class FreeConfigManifest(
     val configsPath: String = "sub/raw?app=xray",
     val signature: String = "",
     val detectedFormat: String = "BASE64_STANDARD",
-    val fetchedAtMs: Long = 0L
+    val fetchedAtMs: Long = 0L,
+    val etag: String = "",
+    val lastModifiedHeader: String = ""
 )
 
 /**
@@ -136,7 +138,8 @@ data class AutoVpnSourceFeed(
  * Measured quality metrics for a candidate configuration.
  * Ranking uses strictly non-geographic network metrics:
  * - Real connection success & recent validation timestamp
- * - Connection latency (ms)
+ * - Real VPN latency (HTTP 204 through Xray proxy in ms)
+ * - Diagnostic TCP connect latency (kept strictly separate from Real VPN Latency)
  * - Actual download performance (bps)
  * - Connection stability (success vs failure ratio & consecutive failures)
  * - Network compatibility (protocol/transport/security suitability)
@@ -146,6 +149,7 @@ data class CandidateQualityMetrics(
     val protocol: VpnProtocol,
     val isReality: Boolean = false,
     val latencyMs: Long? = null,
+    val tcpConnectMs: Long? = null,
     val proxyVerified: Boolean = false,
     val downloadBps: Long? = null,
     val successCount: Int = 0,

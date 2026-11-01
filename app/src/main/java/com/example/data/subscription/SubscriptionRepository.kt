@@ -34,7 +34,10 @@ data class SubscriptionDownloadPayload(
     val profileTitleHeader: String?,
     val supportUrlHeader: String,
     val webPageUrlHeader: String,
-    val announceHeader: String
+    val announceHeader: String,
+    val notModified: Boolean = false,
+    val etagHeader: String = "",
+    val lastModifiedHeader: String = ""
 )
 
 class SubscriptionDownloadException(
@@ -49,12 +52,15 @@ class SubscriptionDownloadException(
  *
  * Capabilities:
  * - Supports HTTPS subscription URLs, custom ports (e.g., 2096), and paths such as /sub/{token}.
+ * - Supports conditional HTTP requests (`If-None-Match` / `ETag` and `If-Modified-Since` / `Last-Modified`)
+ *   and `HTTP 304 Not Modified`.
  * - Follows valid HTTP redirects (301, 302, 303, 307, 308) up to 5 hops while validating destinations
  *   and preventing HTTPS -> HTTP downgrade attacks.
- * - Handles HTTP 200, 301, 302, 403, 404, 429, and 5xx responses with clear localized diagnostics.
+ * - Handles HTTP 200, 304, 301, 302, 403, 404, 429, and 5xx responses with clear localized diagnostics.
  * - Preserves strict TLS certificate verification (never disables SSL verification).
  * - Automatically detects Plain-text, Standard Base64, URL-safe Base64, JSON, and invalid HTML responses.
- * - Atomically updates subscription profiles only after a valid update succeeds.
+ * - Atomically updates subscription profiles in-place (preserving database IDs, favorites, custom names,
+ *   and selected profile state) only after a valid update succeeds.
  */
 class SubscriptionRepository(
     private val dao: MaxNetDao,
@@ -81,9 +87,13 @@ class SubscriptionRepository(
 
     /**
      * Downloads raw subscription content from [rawUrl] with redirect validation,
-     * status code handling, UTF-8 decoding, and HTML rejection.
+     * conditional HTTP headers (`ETag` / `Last-Modified`), status code handling, UTF-8 decoding, and HTML rejection.
      */
-    suspend fun downloadSubscription(rawUrl: String): Result<SubscriptionDownloadPayload> = withContext(Dispatchers.IO) {
+    suspend fun downloadSubscription(
+        rawUrl: String,
+        etag: String = "",
+        lastModified: String = ""
+    ): Result<SubscriptionDownloadPayload> = withContext(Dispatchers.IO) {
         val cleanUrl = rawUrl.trim().substringBefore("#").trim()
         val validatedUriResult = ConfigParser.validateSubscriptionUrl(cleanUrl)
         if (validatedUriResult.isFailure) {
@@ -113,13 +123,21 @@ class SubscriptionRepository(
             for (hop in 0..MAX_REDIRECT_HOPS) {
                 visitedUrls.add(currentUrl.toString())
 
-                val request = Request.Builder()
+                val reqBuilder = Request.Builder()
                     .url(currentUrl)
                     .header("User-Agent", COMPATIBLE_USER_AGENT)
                     .header("Accept", "text/plain, application/json, */*")
                     .header("Accept-Charset", "UTF-8")
                     .get()
-                    .build()
+
+                if (etag.isNotBlank()) {
+                    reqBuilder.header("If-None-Match", etag.trim())
+                }
+                if (lastModified.isNotBlank()) {
+                    reqBuilder.header("If-Modified-Since", lastModified.trim())
+                }
+
+                val request = reqBuilder.build()
 
                 val response: Response = httpClient.newCall(request).execute()
                 response.use { resp ->
@@ -171,6 +189,40 @@ class SubscriptionRepository(
                         }
                         currentUrl = nextUrl
                         return@use
+                    }
+
+                    val respEtag = (resp.header("ETag") ?: resp.header("etag"))?.trim().orEmpty().ifBlank { etag }
+                    val respLastMod = (resp.header("Last-Modified") ?: resp.header("last-modified"))?.trim().orEmpty().ifBlank { lastModified }
+                    val userInfoHeader = resp.header("Subscription-Userinfo")
+                        ?: resp.header("subscription-userinfo")
+                    val parsedUserInfo = parseSubscriptionUserInfo(userInfoHeader)
+                    val intervalHeader = (resp.header("Profile-Update-Interval")
+                        ?: resp.header("profile-update-interval"))?.toIntOrNull()
+                    val titleHeader = decodeProfileTitleHeader(
+                        resp.header("Profile-Title") ?: resp.header("profile-title")
+                    )
+                    val supportUrlHeader = resp.header("Support-Url").orEmpty()
+                    val webPageUrlHeader = resp.header("Profile-Web-Page-Url").orEmpty()
+                    val announceHeader = resp.header("Announce").orEmpty()
+
+                    // Handle HTTP 304 Not Modified
+                    if (code == 304) {
+                        return@withContext Result.success(
+                            SubscriptionDownloadPayload(
+                                finalUrl = currentUrl.toString(),
+                                httpStatusCode = 304,
+                                bodyText = "",
+                                userInfo = parsedUserInfo,
+                                updateIntervalHours = intervalHeader,
+                                profileTitleHeader = titleHeader,
+                                supportUrlHeader = supportUrlHeader,
+                                webPageUrlHeader = webPageUrlHeader,
+                                announceHeader = announceHeader,
+                                notModified = true,
+                                etagHeader = respEtag,
+                                lastModifiedHeader = respLastMod
+                            )
+                        )
                     }
 
                     // Handle explicit HTTP error codes
@@ -250,18 +302,6 @@ class SubscriptionRepository(
                         )
                     }
 
-                    val userInfoHeader = resp.header("Subscription-Userinfo")
-                        ?: resp.header("subscription-userinfo")
-                    val parsedUserInfo = parseSubscriptionUserInfo(userInfoHeader)
-                    val intervalHeader = (resp.header("Profile-Update-Interval")
-                        ?: resp.header("profile-update-interval"))?.toIntOrNull()
-                    val titleHeader = decodeProfileTitleHeader(
-                        resp.header("Profile-Title") ?: resp.header("profile-title")
-                    )
-                    val supportUrlHeader = resp.header("Support-Url").orEmpty()
-                    val webPageUrlHeader = resp.header("Profile-Web-Page-Url").orEmpty()
-                    val announceHeader = resp.header("Announce").orEmpty()
-
                     return@withContext Result.success(
                         SubscriptionDownloadPayload(
                             finalUrl = currentUrl.toString(),
@@ -272,7 +312,10 @@ class SubscriptionRepository(
                             profileTitleHeader = titleHeader,
                             supportUrlHeader = supportUrlHeader,
                             webPageUrlHeader = webPageUrlHeader,
-                            announceHeader = announceHeader
+                            announceHeader = announceHeader,
+                            notModified = false,
+                            etagHeader = respEtag,
+                            lastModifiedHeader = respLastMod
                         )
                     )
                 }
@@ -433,21 +476,28 @@ class SubscriptionRepository(
         }
 
         val (result, report) = refreshSubscriptionWithReport(targetSub, isNewCreation = existingSub == null)
-        // If this was a newly created subscription row and initial download failed, keep or clean up?
-        // Keeping the subscription item with error status allows the user to retry with the manual refresh button,
-        // or if the URL itself was unreachable, they can see the status in Subscriptions tab.
         result to report
     }
 
     /**
      * Refreshes an existing [SubscriptionItem] and returns both the Result and a detailed [SubscriptionImportReport].
-     * Preserves existing profiles belonging to this subscription until the new update succeeds.
+     * Performs in-place updates of existing subscription profiles (preserving database IDs, user-customized remarks,
+     * favorites, pins, cached latency diagnostics, and selected server state), adds newly discovered profiles,
+     * removes obsolete profiles for this subscription, and never touches manual profiles (`subscriptionId == null`).
      */
     suspend fun refreshSubscriptionWithReport(
         sub: SubscriptionItem,
         isNewCreation: Boolean = false
     ): Pair<Result<SubscriptionItem>, SubscriptionImportReport> = withContext(Dispatchers.IO) {
-        val downloadResult = downloadSubscription(sub.url)
+        val allBefore = dao.getAllProfilesSnapshot().map { it.toDomain() }
+        val existingThisSubProfiles = allBefore.filter { it.subscriptionId == sub.id }
+
+        val useConditionalHeaders = !isNewCreation && existingThisSubProfiles.isNotEmpty()
+        val downloadResult = downloadSubscription(
+            rawUrl = sub.url,
+            etag = if (useConditionalHeaders) sub.etag else "",
+            lastModified = if (useConditionalHeaders) sub.lastModifiedHeader else ""
+        )
         if (downloadResult.isFailure) {
             val err = downloadResult.exceptionOrNull()
             val dlEx = err as? SubscriptionDownloadException
@@ -457,7 +507,8 @@ class SubscriptionRepository(
 
             val failedSub = sub.copy(
                 lastUpdatedAt = System.currentTimeMillis(),
-                lastStatus = "Error: $safeMsgEn"
+                lastStatus = "Error: $safeMsgEn",
+                profileCount = existingThisSubProfiles.size.takeIf { it > 0 } ?: sub.profileCount
             )
             dao.updateSubscription(SubscriptionEntity.fromDomain(failedSub))
             onLog("ERROR", "Subscription", "Subscription '${sub.title}' failed: $safeMsgEn", listOf(sub.url))
@@ -479,16 +530,53 @@ class SubscriptionRepository(
         }
 
         val payload = downloadResult.getOrThrow()
+
+        // Handle HTTP 304 Not Modified cleanly without modifying existing profiles
+        if (payload.notModified && existingThisSubProfiles.isNotEmpty()) {
+            val updatedSub = sub.copy(
+                updateIntervalHours = payload.updateIntervalHours ?: sub.updateIntervalHours,
+                lastUpdatedAt = System.currentTimeMillis(),
+                lastStatus = "OK (${existingThisSubProfiles.size} servers)",
+                uploadBytes = payload.userInfo["upload"] ?: sub.uploadBytes,
+                downloadBytes = payload.userInfo["download"] ?: sub.downloadBytes,
+                totalBytes = payload.userInfo["total"] ?: sub.totalBytes,
+                expireTimestampSec = payload.userInfo["expire"] ?: sub.expireTimestampSec,
+                supportUrl = payload.supportUrlHeader.ifBlank { sub.supportUrl },
+                webPageUrl = payload.webPageUrlHeader.ifBlank { sub.webPageUrl },
+                announcement = payload.announceHeader.ifBlank { sub.announcement },
+                profileCount = existingThisSubProfiles.size,
+                etag = payload.etagHeader.ifBlank { sub.etag },
+                lastModifiedHeader = payload.lastModifiedHeader.ifBlank { sub.lastModifiedHeader }
+            )
+            dao.updateSubscription(SubscriptionEntity.fromDomain(updatedSub))
+            onLog(
+                "INFO",
+                "Subscription",
+                "Subscription '${updatedSub.title}' is already up to date (HTTP 304, ${existingThisSubProfiles.size} servers)",
+                listOf(sub.url)
+            )
+            val report = SubscriptionImportReport(
+                title = updatedSub.title,
+                sourceType = "SUBSCRIPTION",
+                detectedFormat = SubscriptionFormat.PLAIN_TEXT,
+                totalReceivedCount = existingThisSubProfiles.size,
+                newImportedCount = 0,
+                duplicateCount = existingThisSubProfiles.size,
+                invalidCount = 0,
+                statusMessageFa = "اشتراک بروز است؛ تغییری در سرورها وجود نداشت (HTTP 304)",
+                statusMessageEn = "Subscription is up to date (HTTP 304 Not Modified)",
+                isSuccess = true,
+                httpStatusCode = 304,
+                subscriptionItem = updatedSub
+            )
+            return@withContext Result.success(updatedSub) to report
+        }
+
         val (detectedFormat, _) = ConfigParser.detectSubscriptionFormat(payload.bodyText)
 
-        // Snapshot existing profiles in database before modifying anything
-        val allBefore = dao.getAllProfilesSnapshot().map { it.toDomain() }
+        // Fingerprints of profiles belonging to OTHER subscriptions or manual imports (`subscriptionId != sub.id`)
         val otherProfilesFingerprints = allBefore
             .filter { it.subscriptionId != sub.id }
-            .map { it.uniqueFingerprintKey() }
-            .toSet()
-        val previousThisSubFingerprints = allBefore
-            .filter { it.subscriptionId == sub.id }
             .map { it.uniqueFingerprintKey() }
             .toSet()
 
@@ -501,8 +589,7 @@ class SubscriptionRepository(
         }
 
         // Parse batch against other profiles (manual + other subscriptions) so this subscription's profiles
-        // can be cleanly replaced while skipping duplicates that already exist in manual/other subscriptions
-        // or duplicates within the downloaded batch itself.
+        // can be synchronized in-place while skipping duplicates that already exist in manual/other subscriptions.
         val batch = ConfigParser.parseBatch(
             rawInput = payload.bodyText,
             defaultGroup = effectiveTitle,
@@ -519,7 +606,8 @@ class SubscriptionRepository(
             }
             val failedSub = sub.copy(
                 lastUpdatedAt = System.currentTimeMillis(),
-                lastStatus = "Error: $firstReason"
+                lastStatus = "Error: $firstReason",
+                profileCount = existingThisSubProfiles.size.takeIf { it > 0 } ?: sub.profileCount
             )
             dao.updateSubscription(SubscriptionEntity.fromDomain(failedSub))
             onLog("ERROR", "Subscription", "Subscription '${sub.title}' parse failed: $firstReason", listOf(sub.url))
@@ -540,60 +628,128 @@ class SubscriptionRepository(
             return@withContext Result.failure<SubscriptionItem>(IllegalStateException(firstReason)) to report
         }
 
-        // Count how many of batch.profiles were already present in previousThisSubFingerprints
-        val retainedFromPreviousCount = if (isNewCreation) {
-            0
-        } else {
-            batch.profiles.count { previousThisSubFingerprints.contains(it.uniqueFingerprintKey()) }
-        }
-        val genuinelyNewCount = (batch.profiles.size - retainedFromPreviousCount).coerceAtLeast(0)
-        val totalDuplicatesCount = batch.duplicatesSkipped + retainedFromPreviousCount
-
         if (effectiveTitle.isNotBlank() && effectiveTitle != "Default") {
             dao.insertGroup(ProfileGroupEntity(name = effectiveTitle))
         }
 
-        val newEntities = batch.profiles.mapIndexed { idx, p ->
-            ProfileEntity.fromDomain(
-                p.copy(
-                    subscriptionId = sub.id,
-                    groupName = effectiveTitle,
-                    sortOrder = idx
-                )
-            )
+        // In-place reconciliation against existingThisSubProfiles:
+        // 1. Primary match by full uniqueFingerprintKey()
+        // 2. Secondary match by core endpoint identity (protocol|address|port|credential) or remarks
+        //    so updated transport/SNI parameters update the existing row in-place rather than recreating it!
+        val availableByFingerprint = existingThisSubProfiles.associateBy { it.uniqueFingerprintKey() }.toMutableMap()
+        val matchedExistingIds = mutableSetOf<Long>()
+        val profilesToUpdate = mutableListOf<ProfileEntity>()
+        val profilesToInsert = mutableListOf<ProfileEntity>()
+
+        fun coreIdentityKey(p: com.example.domain.model.ServerProfile): String {
+            return "${p.protocol.name}|${p.address.trim().lowercase()}|${p.port}|${p.credential.trim()}"
         }
+
+        for ((idx, incoming) in batch.profiles.withIndex()) {
+            val exactMatch = availableByFingerprint.remove(incoming.uniqueFingerprintKey())
+                ?.takeIf { matchedExistingIds.add(it.id) }
+
+            val endpointOrRemarkMatch = if (exactMatch == null) {
+                val incomingCoreKey = coreIdentityKey(incoming)
+                val candidate = existingThisSubProfiles.firstOrNull { existing ->
+                    existing.id !in matchedExistingIds &&
+                        (coreIdentityKey(existing) == incomingCoreKey ||
+                            (existing.remarks.equals(incoming.remarks, ignoreCase = true) &&
+                                existing.protocol == incoming.protocol))
+                }
+                if (candidate != null) {
+                    matchedExistingIds.add(candidate.id)
+                    availableByFingerprint.values.removeIf { it.id == candidate.id }
+                }
+                candidate
+            } else {
+                null
+            }
+
+            val existing = exactMatch ?: endpointOrRemarkMatch
+            if (existing != null) {
+                val sameTransport = exactMatch != null
+                val preservedRemarks = if (existing.userCustomizedRemarks && existing.remarks.isNotBlank()) {
+                    existing.remarks
+                } else {
+                    incoming.remarks
+                }
+                val mergedDomain = incoming.copy(
+                    id = existing.id,
+                    remarks = preservedRemarks,
+                    groupName = effectiveTitle,
+                    subscriptionId = sub.id,
+                    isFavorite = existing.isFavorite,
+                    isPinned = existing.isPinned,
+                    sortOrder = idx,
+                    lastLatencyMs = if (sameTransport) existing.lastLatencyMs else null,
+                    tcpConnectMs = if (sameTransport) existing.tcpConnectMs else null,
+                    latencyType = if (sameTransport) existing.latencyType else com.example.domain.model.LatencyMeasureType.UNTESTED,
+                    lastTestedAtMs = if (sameTransport) existing.lastTestedAtMs else null,
+                    userCustomizedRemarks = existing.userCustomizedRemarks,
+                    createdAt = existing.createdAt
+                )
+                profilesToUpdate.add(ProfileEntity.fromDomain(mergedDomain))
+            } else {
+                profilesToInsert.add(
+                    ProfileEntity.fromDomain(
+                        incoming.copy(
+                            id = 0L,
+                            subscriptionId = sub.id,
+                            groupName = effectiveTitle,
+                            sortOrder = idx
+                        )
+                    )
+                )
+            }
+        }
+
+        // Obsolete profiles from this subscription that are no longer present in the subscription response
+        val obsoleteProfileIds = if (batch.profiles.isNotEmpty()) {
+            existingThisSubProfiles
+                .filter { it.id !in matchedExistingIds }
+                .map { it.id }
+        } else {
+            emptyList()
+        }
+
+        val retainedFromPreviousCount = if (isNewCreation) 0 else profilesToUpdate.size
+        val genuinelyNewCount = profilesToInsert.size
+        val totalDuplicatesCount = batch.duplicatesSkipped + retainedFromPreviousCount
 
         val updatedSub = sub.copy(
             title = effectiveTitle,
             updateIntervalHours = payload.updateIntervalHours ?: sub.updateIntervalHours,
             lastUpdatedAt = System.currentTimeMillis(),
             lastStatus = "OK (${batch.profiles.size} servers)",
-            uploadBytes = payload.userInfo["upload"],
-            downloadBytes = payload.userInfo["download"],
-            totalBytes = payload.userInfo["total"],
-            expireTimestampSec = payload.userInfo["expire"],
+            uploadBytes = payload.userInfo["upload"] ?: sub.uploadBytes,
+            downloadBytes = payload.userInfo["download"] ?: sub.downloadBytes,
+            totalBytes = payload.userInfo["total"] ?: sub.totalBytes,
+            expireTimestampSec = payload.userInfo["expire"] ?: sub.expireTimestampSec,
             supportUrl = payload.supportUrlHeader.ifBlank { sub.supportUrl },
             webPageUrl = payload.webPageUrlHeader.ifBlank { sub.webPageUrl },
             announcement = payload.announceHeader.ifBlank { sub.announcement },
-            profileCount = batch.profiles.size
+            profileCount = batch.profiles.size,
+            etag = payload.etagHeader.ifBlank { sub.etag },
+            lastModifiedHeader = payload.lastModifiedHeader.ifBlank { sub.lastModifiedHeader }
         )
 
-        // Atomic database transaction: only replaces this subscription's profiles after everything succeeded
+        // Atomic in-place database transaction
         if (batch.profiles.isNotEmpty()) {
-            dao.replaceSubscriptionProfilesTransaction(
-                subscriptionId = sub.id,
-                newProfiles = newEntities,
+            dao.syncSubscriptionProfilesInPlaceTransaction(
+                profilesToUpdateInPlace = profilesToUpdate,
+                profilesToInsertNew = profilesToInsert,
+                obsoleteProfileIdsToDelete = obsoleteProfileIds,
                 updatedSubscription = SubscriptionEntity.fromDomain(updatedSub)
             )
         } else {
-            // All profiles in the subscription already existed in manual/other profiles
             dao.updateSubscription(SubscriptionEntity.fromDomain(updatedSub))
         }
 
         onLog(
             "INFO",
             "Subscription",
-            "Updated '${updatedSub.title}': total=${batch.totalReceivedCount}, new=$genuinelyNewCount, duplicate=$totalDuplicatesCount, invalid=${batch.failures.size}",
+            "Updated '${updatedSub.title}': total=${batch.totalReceivedCount}, new=$genuinelyNewCount, updated=${profilesToUpdate.size}, removed=${obsoleteProfileIds.size}, invalid=${batch.failures.size}",
             listOf(sub.url)
         )
 

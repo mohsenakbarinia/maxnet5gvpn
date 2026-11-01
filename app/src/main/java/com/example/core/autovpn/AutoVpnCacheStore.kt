@@ -75,6 +75,25 @@ class AutoVpnCacheStore(context: Context? = null) {
         persistToPrefs()
     }
 
+    /**
+     * Updates the cached manifest's `fetchedAtMs`, `etag`, and `lastModifiedHeader` when a conditional
+     * HTTP request returns `304 Not Modified`, preserving all cached configurations.
+     */
+    @Synchronized
+    fun markManifestFreshNotModified(
+        nowMs: Long = System.currentTimeMillis(),
+        etag: String = "",
+        lastModifiedHeader: String = ""
+    ) {
+        val current = lastManifest ?: return
+        lastManifest = current.copy(
+            fetchedAtMs = nowMs,
+            etag = etag.ifBlank { current.etag },
+            lastModifiedHeader = lastModifiedHeader.ifBlank { current.lastModifiedHeader }
+        )
+        persistToPrefs()
+    }
+
     @Synchronized
     fun updateMetrics(profile: ServerProfile, metrics: CandidateQualityMetrics) {
         val key = profile.uniqueFingerprintKey()
@@ -100,7 +119,14 @@ class AutoVpnCacheStore(context: Context? = null) {
             val negativeEphemeralId = -(idx + 1000L)
             profile.copy(
                 id = if (profile.id == 0L) negativeEphemeralId else profile.id,
-                lastLatencyMs = m?.latencyMs ?: profile.lastLatencyMs
+                lastLatencyMs = m?.latencyMs ?: profile.lastLatencyMs,
+                tcpConnectMs = m?.tcpConnectMs ?: profile.tcpConnectMs,
+                latencyType = if (m?.proxyVerified == true && m.latencyMs != null) {
+                    com.example.domain.model.LatencyMeasureType.PROXY_HTTP_DELAY
+                } else {
+                    profile.latencyType
+                },
+                lastTestedAtMs = m?.lastValidatedAtMs?.takeIf { it > 0L } ?: profile.lastTestedAtMs
             )
         }
         memoizedProfiles = enriched
@@ -144,7 +170,9 @@ class AutoVpnCacheStore(context: Context? = null) {
                     configsPath = mObj.optString("configs_path", "sub/raw?app=xray"),
                     signature = mObj.optString("signature", ""),
                     detectedFormat = mObj.optString("detected_format", "BASE64_STANDARD"),
-                    fetchedAtMs = mObj.optLong("fetched_at_ms", 0L)
+                    fetchedAtMs = mObj.optLong("fetched_at_ms", 0L),
+                    etag = mObj.optString("etag", ""),
+                    lastModifiedHeader = mObj.optString("last_modified_header", "")
                 )
             }
         }
@@ -173,6 +201,7 @@ class AutoVpnCacheStore(context: Context? = null) {
                 val gradeName = obj.optString("grade", AutoQualityGrade.UNVERIFIED.name)
                 val grade = runCatching { AutoQualityGrade.valueOf(gradeName) }.getOrDefault(AutoQualityGrade.UNVERIFIED)
                 val latency = if (obj.has("latencyMs") && !obj.isNull("latencyMs")) obj.optLong("latencyMs") else null
+                val tcpConnect = if (obj.has("tcpConnectMs") && !obj.isNull("tcpConnectMs")) obj.optLong("tcpConnectMs") else null
                 val downBps = if (obj.has("downloadBps") && !obj.isNull("downloadBps")) obj.optLong("downloadBps") else null
                 val shareUri = obj.optString("shareUri", "")
                 if (shareUri.isNotBlank()) {
@@ -183,6 +212,7 @@ class AutoVpnCacheStore(context: Context? = null) {
                     protocol = proto,
                     isReality = obj.optBoolean("isReality", false),
                     latencyMs = latency,
+                    tcpConnectMs = tcpConnect,
                     proxyVerified = obj.optBoolean("proxyVerified", false),
                     downloadBps = downBps,
                     successCount = obj.optInt("successCount", 0),
@@ -215,6 +245,8 @@ class AutoVpnCacheStore(context: Context? = null) {
                     put("signature", m.signature)
                     put("detected_format", m.detectedFormat)
                     put("fetched_at_ms", m.fetchedAtMs)
+                    put("etag", m.etag)
+                    put("last_modified_header", m.lastModifiedHeader)
                 }
                 editor.putString(KEY_MANIFEST_JSON, mObj.toString())
             }
@@ -239,6 +271,7 @@ class AutoVpnCacheStore(context: Context? = null) {
                     put("protocol", m.protocol.name)
                     put("isReality", m.isReality)
                     if (m.latencyMs != null) put("latencyMs", m.latencyMs)
+                    if (m.tcpConnectMs != null) put("tcpConnectMs", m.tcpConnectMs)
                     put("proxyVerified", m.proxyVerified)
                     if (m.downloadBps != null) put("downloadBps", m.downloadBps)
                     put("successCount", m.successCount)

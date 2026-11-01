@@ -100,6 +100,8 @@ import com.example.core.autovpn.AutoVpnStage
 import com.example.core.autovpn.AutoVpnStatusSnapshot
 import com.example.core.autovpn.ConnectionOwnership
 import com.example.core.autovpn.VpnAppMode
+import com.example.core.sync.DualSyncState
+import com.example.core.sync.SyncProgressState
 import com.example.domain.model.AppSettings
 import com.example.domain.model.ConnectionQualityReport
 import com.example.domain.model.DiagnosticSnapshot
@@ -136,6 +138,7 @@ fun HomeScreen(
     diagnostics: DiagnosticSnapshot = DiagnosticSnapshot(),
     qualityReport: ConnectionQualityReport = ConnectionQualityReport(),
     autoVpnStatus: AutoVpnStatusSnapshot = AutoVpnStatusSnapshot(),
+    dualSyncState: DualSyncState = DualSyncState(),
     speedHistory: List<Pair<Long, Long>>,
     settings: AppSettings,
     onSwitchVpnMode: (VpnAppMode) -> Unit = {},
@@ -285,6 +288,7 @@ fun HomeScreen(
                     personalProfile = personalProfile,
                     connectionState = connectionState,
                     autoVpnStatus = autoVpnStatus,
+                    dualSyncState = dualSyncState,
                     isFa = isFa,
                     usePersian = usePersian,
                     onTestActiveLatency = onTestActiveLatency,
@@ -964,6 +968,7 @@ private fun ActiveServerCard(
     personalProfile: ServerProfile? = activeProfile,
     connectionState: VpnConnectionState,
     autoVpnStatus: AutoVpnStatusSnapshot,
+    dualSyncState: DualSyncState = DualSyncState(),
     isFa: Boolean,
     usePersian: Boolean,
     onTestActiveLatency: (ServerProfile) -> Unit,
@@ -974,6 +979,8 @@ private fun ActiveServerCard(
     val isConnected = connectionState == VpnConnectionState.CONNECTED
 
     if (selectedVpnMode == VpnAppMode.MY_VPN) {
+        val personalSync = dualSyncState.personalStatus
+        val personalSyncLine = if (isFa) personalSync.messageFa else personalSync.messageEn
         Card(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1041,6 +1048,17 @@ private fun ActiveServerCard(
                                 maxLines = 2,
                                 overflow = TextOverflow.Ellipsis
                             )
+                            if (personalSync.state != SyncProgressState.IDLE && personalSyncLine.isNotBlank()) {
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = personalSyncLine,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (personalSync.state == SyncProgressState.ERROR) AmberWarning else EmeraldAccent.copy(alpha = 0.9f),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.testTag("personal_vpn_sync_status")
+                                )
+                            }
                         }
                     }
 
@@ -1060,12 +1078,22 @@ private fun ActiveServerCard(
                                 color = EmeraldAccent,
                                 fontWeight = FontWeight.Bold
                             )
-                            personalProfile?.lastLatencyMs?.let { ping ->
+                            val displayLatency = personalProfile?.realVpnLatencyMs ?: personalProfile?.lastLatencyMs
+                            displayLatency?.let { ping ->
                                 Text(
                                     text = "${LocalizationHelper.formatDigits(ping.toString(), usePersian)} ms",
                                     style = MaterialTheme.typography.labelSmall,
                                     fontFamily = JetBrainsMonoFontFamily,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            personalProfile?.tcpConnectMs?.let { tcpMs ->
+                                Text(
+                                    text = "TCP ${LocalizationHelper.formatDigits(tcpMs.toString(), usePersian)}ms",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontSize = 9.sp,
+                                    fontFamily = JetBrainsMonoFontFamily,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
                                 )
                             }
                         }
@@ -1152,7 +1180,13 @@ private fun ActiveServerCard(
     }
 
     val statusSubtitle = if (isFa) autoVpnStatus.detailMessageFa else autoVpnStatus.detailMessageEn
-    val syncStatusLine = if (isFa) autoVpnStatus.lastSyncStatusFa else autoVpnStatus.lastSyncStatusEn
+    val freeSync = dualSyncState.freeVpnStatus
+    val syncStatusLine = when {
+        freeSync.state == SyncProgressState.SYNCING -> if (isFa) freeSync.messageFa else freeSync.messageEn
+        freeSync.state == SyncProgressState.SUCCESS && freeSync.messageEn.isNotBlank() ->
+            if (isFa) freeSync.messageFa else freeSync.messageEn
+        else -> if (isFa) autoVpnStatus.lastSyncStatusFa else autoVpnStatus.lastSyncStatusEn
+    }
 
     Card(
         modifier = Modifier

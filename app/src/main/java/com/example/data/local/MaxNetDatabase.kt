@@ -16,7 +16,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         RoutingRuleEntity::class,
         ConnectionHistoryEntity::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 abstract class MaxNetDatabase : RoomDatabase() {
@@ -37,6 +37,20 @@ abstract class MaxNetDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Non-destructive migration from version 2 to 3 adding diagnostic TCP connect latency,
+         * test timestamp, user-customized remarks flag, and conditional HTTP headers (ETag/Last-Modified).
+         */
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `profiles` ADD COLUMN `tcpConnectMs` INTEGER DEFAULT NULL")
+                db.execSQL("ALTER TABLE `profiles` ADD COLUMN `lastTestedAtMs` INTEGER DEFAULT NULL")
+                db.execSQL("ALTER TABLE `profiles` ADD COLUMN `userCustomizedRemarks` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE `subscriptions` ADD COLUMN `etag` TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE `subscriptions` ADD COLUMN `lastModifiedHeader` TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
         fun getInstance(context: Context): MaxNetDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -44,7 +58,7 @@ abstract class MaxNetDatabase : RoomDatabase() {
                     MaxNetDatabase::class.java,
                     "maxnet5g_vpn.db"
                 )
-                    .addMigrations(MIGRATION_1_2)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                     .build()
                     .also { INSTANCE = it }
             }

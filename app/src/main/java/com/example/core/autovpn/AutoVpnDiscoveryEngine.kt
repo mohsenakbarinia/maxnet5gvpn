@@ -42,7 +42,8 @@ data class SubscriptionInspectionResult(
 /**
  * Automatic Configuration Discovery Engine for MAXNET5G FREE VPN.
  *
- * Exclusively uses the dedicated Cloudflare Workers subscription endpoint for Free VPN.
+ * Exclusively uses the dedicated subscription endpoint for Free VPN:
+ * https://io.maxnet6g.ir:2096/sub/acme0ym4y3dswjo5
  * Does NOT fetch Free VPN configurations from GitHub, random public repositories, or other
  * external configuration providers.
  *
@@ -62,37 +63,40 @@ data class SubscriptionInspectionResult(
 object AutoVpnDiscoveryEngine {
 
     private const val PLACEHOLDER_ENV_URL = "YOUR_FREE_VPN_WORKERS_SUBSCRIPTION_URL"
+    private const val PLACEHOLDER_ENV_URL_GENERIC = "YOUR_FREE_VPN_SUBSCRIPTION_URL"
     private const val CONNECT_TIMEOUT_MS = 8000
     private const val READ_TIMEOUT_MS = 10000
     private const val MAX_RESPONSE_BYTES = 1024 * 1024 // 1 MB cap
     private const val MAX_CANDIDATES_PER_DISCOVERY = 250
 
-    // XOR-obfuscated (key = 0x5A) runtime fallback for the dedicated Cloudflare Workers subscription endpoint
+    // XOR-obfuscated (key = 0x5A) runtime fallback for the exclusive Free VPN subscription endpoint
+    // "https://io.maxnet6g.ir:2096/sub/acme0ym4y3dswjo5"
     // so the raw credential URL is not stored as a plaintext string literal in git-tracked source files.
-    private val OBFUSCATED_WORKERS_ENDPOINT = intArrayOf(
-        50, 46, 46, 42, 41, 96, 117, 117, 52, 63, 46, 40, 59, 119, 106, 106, 105, 56, 63, 99, 116,
-        55, 53, 50, 41, 63, 52, 59, 49, 56, 59, 40, 51, 52, 51, 59, 61, 55, 59, 51, 54, 57, 53, 55,
-        116, 45, 53, 40, 49, 63, 40, 41, 116, 62, 63, 44, 117, 107, 106, 59, 62, 110, 63, 106, 106,
-        105, 104, 109, 109, 117, 41, 47, 56, 117, 40, 59, 45, 101, 59, 42, 42, 103, 34, 40, 59, 35
+    private val OBFUSCATED_SUBSCRIPTION_ENDPOINT = intArrayOf(
+        50, 46, 46, 42, 41, 96, 117, 117, 51, 53, 116, 55, 59, 34, 52, 63, 46, 108, 61, 116, 51, 40, 96, 104, 106, 99, 108, 117, 41, 47, 56, 117, 59, 57, 55, 63, 106, 35, 55, 110, 35, 105, 62, 41, 45, 48, 53, 111
     )
 
     /**
-     * Resolves the dedicated Cloudflare Workers subscription endpoint at runtime without exposing
+     * Resolves the dedicated Free VPN subscription endpoint at runtime without exposing
      * it in logs or git-tracked plaintext literals.
      */
     fun resolveFreeVpnSubscriptionEndpoint(): String {
         val fromBuildConfig = runCatching { BuildConfig.FREE_VPN_SUBSCRIPTION_URL.trim() }.getOrDefault("")
         if (fromBuildConfig.startsWith("https://", ignoreCase = true) &&
-            fromBuildConfig != PLACEHOLDER_ENV_URL
+            fromBuildConfig != PLACEHOLDER_ENV_URL && fromBuildConfig != PLACEHOLDER_ENV_URL_GENERIC
         ) {
             return fromBuildConfig
         }
         val fromProp = System.getProperty("free.vpn.subscription.url")?.trim().orEmpty()
-        if (fromProp.startsWith("https://", ignoreCase = true) && fromProp != PLACEHOLDER_ENV_URL) {
+        if (fromProp.startsWith("https://", ignoreCase = true) &&
+            fromProp != PLACEHOLDER_ENV_URL && fromProp != PLACEHOLDER_ENV_URL_GENERIC
+        ) {
             return fromProp
         }
         val fromEnv = System.getenv("FREE_VPN_SUBSCRIPTION_URL")?.trim().orEmpty()
-        if (fromEnv.startsWith("https://", ignoreCase = true) && fromEnv != PLACEHOLDER_ENV_URL) {
+        if (fromEnv.startsWith("https://", ignoreCase = true) &&
+            fromEnv != PLACEHOLDER_ENV_URL && fromEnv != PLACEHOLDER_ENV_URL_GENERIC
+        ) {
             return fromEnv
         }
         val dotEnvFile = File(".env")
@@ -105,12 +109,14 @@ object AutoVpnDiscoveryEngine {
                         ?.trim()
                 }
             }.getOrNull().orEmpty()
-            if (fromDotEnv.startsWith("https://", ignoreCase = true) && fromDotEnv != PLACEHOLDER_ENV_URL) {
+            if (fromDotEnv.startsWith("https://", ignoreCase = true) &&
+                fromDotEnv != PLACEHOLDER_ENV_URL && fromDotEnv != PLACEHOLDER_ENV_URL_GENERIC
+            ) {
                 return fromDotEnv
             }
         }
-        val bytes = ByteArray(OBFUSCATED_WORKERS_ENDPOINT.size) { i ->
-            (OBFUSCATED_WORKERS_ENDPOINT[i] xor 0x5A).toByte()
+        val bytes = ByteArray(OBFUSCATED_SUBSCRIPTION_ENDPOINT.size) { i ->
+            (OBFUSCATED_SUBSCRIPTION_ENDPOINT[i] xor 0x5A).toByte()
         }
         return String(bytes, StandardCharsets.UTF_8)
     }
@@ -137,14 +143,14 @@ object AutoVpnDiscoveryEngine {
     )
 
     /**
-     * Sole official remote configuration source: the dedicated Cloudflare Workers subscription endpoint.
+     * Sole official remote configuration source: the exclusive Free VPN subscription endpoint.
      * No GitHub or third-party public repositories are queried at runtime.
      */
     val defaultSourceFeeds: List<AutoVpnSourceFeed>
         get() = listOf(
             AutoVpnSourceFeed(
-                id = "maxnet5g_dedicated_workers_sub",
-                name = "Dedicated Cloudflare Workers Subscription",
+                id = "maxnet5g_exclusive_free_sub",
+                name = "Exclusive Free VPN Subscription",
                 url = resolveFreeVpnSubscriptionEndpoint(),
                 manifestUrl = null,
                 isBackendJsonFeed = false,
@@ -392,33 +398,79 @@ object AutoVpnDiscoveryEngine {
                                     }
                                 } else {
                                     // Direct Cloudflare Workers subscription endpoint (no GitHub manifest dependency)
-                                    val responsePair: Pair<String, String?>? = if (customFetcher != null) {
-                                        customFetcher(feed.url)?.let { it to null }
+                                    if (customFetcher != null) {
+                                        val customBody = customFetcher(feed.url)
+                                        if (!customBody.isNullOrBlank()) {
+                                            val inspection = inspectAndExtractSubscriptionPayload(
+                                                rawBody = customBody,
+                                                contentTypeHeader = null
+                                            ).getOrThrow()
+                                            val nextVersion = (cachedManifest?.version ?: 0) + 1
+                                            val nowMs = System.currentTimeMillis()
+                                            val newManifest = FreeConfigManifest(
+                                                schemaVersion = 1,
+                                                version = nextVersion,
+                                                updatedAt = java.time.Instant.ofEpochMilli(nowMs).toString(),
+                                                configCount = inspection.profiles.size,
+                                                sha256 = inspection.sha256Hex,
+                                                repository = "Cloudflare Workers Subscription",
+                                                configsPath = "sub/raw?app=xray",
+                                                detectedFormat = inspection.detectedFormat.name,
+                                                fetchedAtMs = nowMs
+                                            )
+                                            cacheStore?.saveVerifiedRemoteCatalog(newManifest, inspection.profiles)
+                                            inspection.profiles
+                                        } else {
+                                            null
+                                        }
                                     } else {
-                                        downloadPublicFeedResponse(feed.url)
-                                    }
-                                    if (responsePair != null && responsePair.first.isNotBlank()) {
-                                        val inspection = inspectAndExtractSubscriptionPayload(
-                                            rawBody = responsePair.first,
-                                            contentTypeHeader = responsePair.second
-                                        ).getOrThrow()
-                                        val nextVersion = (cachedManifest?.version ?: 0) + 1
-                                        val nowMs = System.currentTimeMillis()
-                                        val newManifest = FreeConfigManifest(
-                                            schemaVersion = 1,
-                                            version = nextVersion,
-                                            updatedAt = java.time.Instant.ofEpochMilli(nowMs).toString(),
-                                            configCount = inspection.profiles.size,
-                                            sha256 = inspection.sha256Hex,
-                                            repository = "Cloudflare Workers Subscription",
-                                            configsPath = "sub/raw?app=xray",
-                                            detectedFormat = inspection.detectedFormat.name,
-                                            fetchedAtMs = nowMs
+                                        val useConditional = cachedManifest != null && cachedProfiles.isNotEmpty()
+                                        val httpResp = downloadPublicFeedHttpResponse(
+                                            urlString = feed.url,
+                                            ifNoneMatch = if (useConditional) cachedManifest?.etag.orEmpty() else "",
+                                            ifModifiedSince = if (useConditional) cachedManifest?.lastModifiedHeader.orEmpty() else ""
                                         )
-                                        cacheStore?.saveVerifiedRemoteCatalog(newManifest, inspection.profiles)
-                                        inspection.profiles
-                                    } else {
-                                        null
+                                        when {
+                                            httpResp != null && httpResp.notModified && cachedProfiles.isNotEmpty() -> {
+                                                cacheStore?.markManifestFreshNotModified(
+                                                    nowMs = System.currentTimeMillis(),
+                                                    etag = httpResp.etagHeader,
+                                                    lastModifiedHeader = httpResp.lastModifiedHeader
+                                                )
+                                                cachedProfiles
+                                            }
+                                            httpResp != null && httpResp.body.isNotBlank() -> {
+                                                val inspection = inspectAndExtractSubscriptionPayload(
+                                                    rawBody = httpResp.body,
+                                                    contentTypeHeader = httpResp.contentTypeHeader
+                                                ).getOrThrow()
+                                                val isSameDigest = cachedManifest != null &&
+                                                    cachedManifest.sha256.equals(inspection.sha256Hex, ignoreCase = true) &&
+                                                    cachedProfiles.isNotEmpty()
+                                                val nextVersion = if (isSameDigest) {
+                                                    cachedManifest?.version ?: 1
+                                                } else {
+                                                    (cachedManifest?.version ?: 0) + 1
+                                                }
+                                                val nowMs = System.currentTimeMillis()
+                                                val newManifest = FreeConfigManifest(
+                                                    schemaVersion = 1,
+                                                    version = nextVersion,
+                                                    updatedAt = java.time.Instant.ofEpochMilli(nowMs).toString(),
+                                                    configCount = inspection.profiles.size,
+                                                    sha256 = inspection.sha256Hex,
+                                                    repository = "Cloudflare Workers Subscription",
+                                                    configsPath = "sub/raw?app=xray",
+                                                    detectedFormat = inspection.detectedFormat.name,
+                                                    fetchedAtMs = nowMs,
+                                                    etag = httpResp.etagHeader.ifBlank { cachedManifest?.etag.orEmpty() },
+                                                    lastModifiedHeader = httpResp.lastModifiedHeader.ifBlank { cachedManifest?.lastModifiedHeader.orEmpty() }
+                                                )
+                                                cacheStore?.saveVerifiedRemoteCatalog(newManifest, inspection.profiles)
+                                                inspection.profiles
+                                            }
+                                            else -> null
+                                        }
                                     }
                                 }
                             }.getOrNull()
@@ -656,57 +708,113 @@ object AutoVpnDiscoveryEngine {
         return SCRIPT_INJECTION_PATTERNS.any { lower.contains(it) }
     }
 
+    data class PublicFeedHttpResponse(
+        val statusCode: Int,
+        val body: String,
+        val contentTypeHeader: String?,
+        val notModified: Boolean = false,
+        val etagHeader: String = "",
+        val lastModifiedHeader: String = ""
+    )
+
+    /**
+     * Downloads the subscription payload over HTTPS with strict TLS certificate verification,
+     * conditional HTTP headers (`If-None-Match` / `If-Modified-Since`), `HTTP 304` handling,
+     * timeouts, and a 1 MB size cap. Never logs or exposes [urlString].
+     */
+    fun downloadPublicFeedHttpResponse(
+        urlString: String,
+        ifNoneMatch: String = "",
+        ifModifiedSince: String = ""
+    ): PublicFeedHttpResponse? {
+        val url = runCatching { URL(urlString) }.getOrNull() ?: return null
+        if (!url.protocol.equals("https", ignoreCase = true)) {
+            return null // Strictly enforce HTTPS for subscription endpoint
+        }
+        repeat(2) { attempt ->
+            val conn = (url.openConnection() as HttpsURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = CONNECT_TIMEOUT_MS
+                readTimeout = READ_TIMEOUT_MS
+                instanceFollowRedirects = true
+                useCaches = false
+                setRequestProperty("User-Agent", "MAXNET5G-AutoFreeVPN/2.5 (Android; Xray-core)")
+                setRequestProperty("Accept", "text/plain, application/json;q=0.9, */*;q=0.5")
+                if (ifNoneMatch.isNotBlank()) {
+                    setRequestProperty("If-None-Match", ifNoneMatch.trim())
+                }
+                if (ifModifiedSince.isNotBlank()) {
+                    setRequestProperty("If-Modified-Since", ifModifiedSince.trim())
+                }
+            }
+            val result = try {
+                val code = conn.responseCode
+                val etag = (conn.getHeaderField("ETag") ?: conn.getHeaderField("etag"))?.trim().orEmpty().ifBlank { ifNoneMatch }
+                val lastMod = (conn.getHeaderField("Last-Modified") ?: conn.getHeaderField("last-modified"))?.trim().orEmpty().ifBlank { ifModifiedSince }
+                if (code == HttpURLConnection.HTTP_NOT_MODIFIED) {
+                    PublicFeedHttpResponse(
+                        statusCode = 304,
+                        body = "",
+                        contentTypeHeader = conn.contentType,
+                        notModified = true,
+                        etagHeader = etag,
+                        lastModifiedHeader = lastMod
+                    )
+                } else if (code in 200..299) {
+                    val contentType = conn.contentType
+                    if (contentType != null &&
+                        (contentType.contains("text/html", ignoreCase = true) ||
+                            contentType.contains("application/xhtml", ignoreCase = true))
+                    ) {
+                        return null
+                    }
+                    val body = conn.inputStream.bufferedReader(StandardCharsets.UTF_8).use { reader ->
+                        val buffer = CharArray(8192)
+                        val sb = StringBuilder()
+                        var totalRead = 0
+                        while (true) {
+                            val read = reader.read(buffer)
+                            if (read == -1) break
+                            totalRead += read
+                            if (totalRead > MAX_RESPONSE_BYTES) {
+                                throw IllegalStateException("Subscription response exceeded maximum allowed size")
+                            }
+                            sb.append(buffer, 0, read)
+                        }
+                        sb.toString()
+                    }
+                    PublicFeedHttpResponse(
+                        statusCode = code,
+                        body = body,
+                        contentTypeHeader = contentType,
+                        notModified = false,
+                        etagHeader = etag,
+                        lastModifiedHeader = lastMod
+                    )
+                } else {
+                    null
+                }
+            } catch (_: Throwable) {
+                null
+            } finally {
+                conn.disconnect()
+            }
+            if (result != null) return result
+            if (attempt == 0) {
+                runCatching { Thread.sleep(250L) }
+            }
+        }
+        return null
+    }
+
     /**
      * Downloads the subscription payload over HTTPS with strict TLS certificate verification,
      * timeouts, and a 1 MB size cap. Returns Pair(body, contentTypeHeader) or null on error.
      * Never logs or exposes [urlString].
      */
     fun downloadPublicFeedResponse(urlString: String): Pair<String, String?>? {
-        val url = runCatching { URL(urlString) }.getOrNull() ?: return null
-        if (!url.protocol.equals("https", ignoreCase = true)) {
-            return null // Strictly enforce HTTPS for subscription endpoint
-        }
-        val conn = (url.openConnection() as HttpsURLConnection).apply {
-            requestMethod = "GET"
-            connectTimeout = CONNECT_TIMEOUT_MS
-            readTimeout = READ_TIMEOUT_MS
-            instanceFollowRedirects = true
-            useCaches = false
-            setRequestProperty("User-Agent", "MAXNET5G-AutoFreeVPN/2.5 (Android; Xray-core)")
-            setRequestProperty("Accept", "text/plain, application/json;q=0.9, */*;q=0.5")
-        }
-        return try {
-            if (conn.responseCode in 200..299) {
-                val contentType = conn.contentType
-                if (contentType != null &&
-                    (contentType.contains("text/html", ignoreCase = true) ||
-                        contentType.contains("application/xhtml", ignoreCase = true))
-                ) {
-                    return null
-                }
-                val body = conn.inputStream.bufferedReader(StandardCharsets.UTF_8).use { reader ->
-                    val buffer = CharArray(8192)
-                    val sb = StringBuilder()
-                    var totalRead = 0
-                    while (true) {
-                        val read = reader.read(buffer)
-                        if (read == -1) break
-                        totalRead += read
-                        if (totalRead > MAX_RESPONSE_BYTES) {
-                            throw IllegalStateException("Subscription response exceeded maximum allowed size")
-                        }
-                        sb.append(buffer, 0, read)
-                    }
-                    sb.toString()
-                }
-                body to contentType
-            } else {
-                null
-            }
-        } catch (_: Throwable) {
-            null
-        } finally {
-            conn.disconnect()
-        }
+        val resp = downloadPublicFeedHttpResponse(urlString) ?: return null
+        if (resp.notModified || resp.body.isBlank()) return null
+        return resp.body to resp.contentTypeHeader
     }
 }

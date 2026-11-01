@@ -38,9 +38,9 @@ import java.util.concurrent.atomic.AtomicInteger
 class AutoFreeVpnManager(
     private val context: Context? = null,
     val cacheStore: AutoVpnCacheStore = AutoVpnCacheStore(context),
-    private val maxParallelTests: Int = 8,
-    private val candidateTestTimeoutMs: Int = 2200,
-    private val maxCandidatesPerTestBatch: Int = 24,
+    private val maxParallelTests: Int = 4,
+    private val candidateTestTimeoutMs: Int = 9000,
+    private val maxCandidatesPerTestBatch: Int = 16,
     private val maxFailoverAttempts: Int = 5,
     private val baseFailoverBackoffMs: Long = 350L,
     @Volatile var autoRefreshIntervalMs: Long = DEFAULT_AUTO_REFRESH_INTERVAL_MS,
@@ -117,6 +117,11 @@ class AutoFreeVpnManager(
             val currentCached = cacheStore.getCachedValidatedProfiles()
 
             if (remoteSucceeded && currentCached.isNotEmpty()) {
+                val ranked = AutoServerRanker.rankCandidates(
+                    profiles = currentCached,
+                    metricsMap = cacheStore.getMetricsMap()
+                )
+                lastRankedCandidates = ranked
                 _statusState.value = _statusState.value.copy(
                     isRefreshingSubscription = false,
                     discoveredCount = currentCached.size,
@@ -277,7 +282,7 @@ class AutoFreeVpnManager(
             )
             val batchToTest = preRanked.take(maxCandidatesPerTestBatch).map { it.profile }
 
-            // Stage 2: Controlled Parallel Candidate Testing
+            // Stage 2: Controlled Parallel Candidate Testing (Real Xray Proxy HTTP 204 Latency)
             _statusState.value = _statusState.value.copy(
                 stage = AutoVpnStage.TESTING_CANDIDATES,
                 discoveredCount = candidatePool.size,
@@ -300,8 +305,8 @@ class AutoFreeVpnManager(
                     latestManifest != null -> "همگام با اشتراک رایگان (${candidatePool.size} سرور)"
                     else -> "آماده • ${candidatePool.size} کانفیگ رایگان تاییدشده"
                 },
-                detailMessageEn = "Testing ${batchToTest.size} candidates in parallel...",
-                detailMessageFa = "در حال تست موازی ${batchToTest.size} سرور کاندید...",
+                detailMessageEn = "Testing ${batchToTest.size} candidates via real Xray proxy...",
+                detailMessageFa = "در حال تست واقعی ${batchToTest.size} سرور از طریق پروکسی Xray...",
                 lastUpdatedMs = System.currentTimeMillis()
             )
 
@@ -316,7 +321,11 @@ class AutoFreeVpnManager(
                             val outcome = if (customLatencyProbe != null) {
                                 customLatencyProbe(candidate)
                             } else {
-                                LatencyTester.testSingleTcpLatency(candidate, timeoutMs = candidateTestTimeoutMs)
+                                LatencyTester.testRealVpnLatency(
+                                    context = context,
+                                    profile = candidate,
+                                    timeoutMs = candidateTestTimeoutMs
+                                )
                             }
                             val done = completedCounter.incrementAndGet()
                             val isReachable = outcome.latencyMs != null && outcome.latencyMs > 0
@@ -325,13 +334,18 @@ class AutoFreeVpnManager(
                             }
 
                             val existingMetrics = cacheStore.getMetrics(candidate.uniqueFingerprintKey())
+                            val isProxyHttpVerified = outcome.measureType == LatencyMeasureType.PROXY_HTTP_DELAY && isReachable
                             val evaluatedMetrics = AutoServerRanker.evaluateCandidate(
                                 profile = candidate.copy(
-                                    lastLatencyMs = outcome.latencyMs ?: candidate.lastLatencyMs,
-                                    latencyType = outcome.measureType
+                                    lastLatencyMs = outcome.latencyMs,
+                                    tcpConnectMs = outcome.tcpConnectMs ?: candidate.tcpConnectMs,
+                                    latencyType = outcome.measureType,
+                                    lastTestedAtMs = outcome.testedAtMs
                                 ),
                                 existingMetrics = existingMetrics,
-                                measuredLatencyMs = outcome.latencyMs ?: candidate.lastLatencyMs
+                                measuredLatencyMs = outcome.latencyMs,
+                                measuredTcpConnectMs = outcome.tcpConnectMs ?: candidate.tcpConnectMs,
+                                proxyVerified = isProxyHttpVerified
                             )
                             cacheStore.updateMetrics(candidate, evaluatedMetrics)
 
@@ -339,25 +353,27 @@ class AutoFreeVpnManager(
                                 testedCount = done,
                                 workingCandidateCount = workingCounter.get(),
                                 cachedValidatedCount = cacheStore.getCachedValidatedCount(),
-                                detailMessageEn = "Tested $done/${batchToTest.size} candidates (${workingCounter.get()} reachable)...",
-                                detailMessageFa = "تست $done از ${batchToTest.size} سرور انجام شد (${workingCounter.get()} سرور پاسخگو)...",
+                                detailMessageEn = "Tested $done/${batchToTest.size} candidates (${workingCounter.get()} verified)...",
+                                detailMessageFa = "تست واقعی $done از ${batchToTest.size} سرور انجام شد (${workingCounter.get()} سرور پاسخگو)...",
                                 lastUpdatedMs = System.currentTimeMillis()
                             )
 
                             candidate.copy(
-                                lastLatencyMs = outcome.latencyMs ?: candidate.lastLatencyMs,
-                                latencyType = if (outcome.latencyMs != null) outcome.measureType else candidate.latencyType
+                                lastLatencyMs = outcome.latencyMs,
+                                tcpConnectMs = outcome.tcpConnectMs ?: candidate.tcpConnectMs,
+                                latencyType = outcome.measureType,
+                                lastTestedAtMs = outcome.testedAtMs
                             )
                         }
                     }
                 }.awaitAll()
             }
 
-            // Stage 3: Intelligent Multi-Factor Server Ranking
+            // Stage 3: Intelligent Multi-Factor Server Ranking (Primary: Real VPN Latency)
             _statusState.value = _statusState.value.copy(
                 stage = AutoVpnStage.RANKING_SERVERS,
-                detailMessageEn = "Ranking candidates by latency, stability, and network compatibility...",
-                detailMessageFa = "در حال رتبه‌بندی هوشمند بر اساس پینگ، پایداری و سازگاری شبکه...",
+                detailMessageEn = "Ranking candidates by Real VPN Latency, stability, and compatibility...",
+                detailMessageFa = "در حال رتبه‌بندی هوشمند بر اساس پینگ واقعی پروکسی، پایداری و سازگاری شبکه...",
                 lastUpdatedMs = System.currentTimeMillis()
             )
 
