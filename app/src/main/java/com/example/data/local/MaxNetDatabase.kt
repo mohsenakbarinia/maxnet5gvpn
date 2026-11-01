@@ -16,7 +16,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         RoutingRuleEntity::class,
         ConnectionHistoryEntity::class
     ],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 abstract class MaxNetDatabase : RoomDatabase() {
@@ -51,6 +51,25 @@ abstract class MaxNetDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Non-destructive migration from version 3 to 4 adding smart performance metrics
+         * (jitterMs, packetLossRate, successRate, healthScore, consecutiveFailures, lastFailureTimestampMs)
+         * and connection history analytics (failoverReason, activeMode, averageLatencyMs).
+         */
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `profiles` ADD COLUMN `jitterMs` INTEGER DEFAULT NULL")
+                db.execSQL("ALTER TABLE `profiles` ADD COLUMN `packetLossRate` REAL DEFAULT NULL")
+                db.execSQL("ALTER TABLE `profiles` ADD COLUMN `successRate` REAL DEFAULT NULL")
+                db.execSQL("ALTER TABLE `profiles` ADD COLUMN `healthScore` INTEGER DEFAULT NULL")
+                db.execSQL("ALTER TABLE `profiles` ADD COLUMN `consecutiveFailures` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE `profiles` ADD COLUMN `lastFailureTimestampMs` INTEGER DEFAULT NULL")
+                db.execSQL("ALTER TABLE `connection_history` ADD COLUMN `failoverReason` TEXT DEFAULT NULL")
+                db.execSQL("ALTER TABLE `connection_history` ADD COLUMN `activeMode` TEXT NOT NULL DEFAULT 'STABLE'")
+                db.execSQL("ALTER TABLE `connection_history` ADD COLUMN `averageLatencyMs` INTEGER DEFAULT NULL")
+            }
+        }
+
         fun getInstance(context: Context): MaxNetDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -58,7 +77,7 @@ abstract class MaxNetDatabase : RoomDatabase() {
                     MaxNetDatabase::class.java,
                     "maxnet5g_vpn.db"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                     .build()
                     .also { INSTANCE = it }
             }

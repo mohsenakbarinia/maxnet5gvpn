@@ -36,8 +36,22 @@ data class RealProxyLatencyMeasurement(
     val medianLatencyMs: Long,
     val sampleLatenciesMs: List<Long>,
     val warmupLatencyMs: Long? = null,
-    val targetUrl: String
-)
+    val targetUrl: String,
+    val jitterMs: Long = computeJitter(sampleLatenciesMs),
+    val packetLossRate: Float = 0.0f,
+    val successRate: Float = 1.0f
+) {
+    companion object {
+        fun computeJitter(samples: List<Long>): Long {
+            if (samples.size < 2) return 0L
+            var sumDiff = 0L
+            for (i in 1 until samples.size) {
+                sumDiff += kotlin.math.abs(samples[i] - samples[i - 1])
+            }
+            return (sumDiff / (samples.size - 1)).coerceAtLeast(0L)
+        }
+    }
+}
 
 /**
  * Production Native Bridge for Official Xray-core v26.10.29 (`2dust/AndroidLibXrayLite` Lib v40,
@@ -927,12 +941,18 @@ object XrayNativeBridge {
                     }
 
                     if (samples.isNotEmpty()) {
+                        val targetCount = sampleCount.coerceIn(1, 5)
+                        val packetLoss = ((targetCount - samples.size).toFloat() / targetCount.toFloat()).coerceIn(0.0f, 1.0f)
+                        val successRate = (samples.size.toFloat() / targetCount.toFloat()).coerceIn(0.0f, 1.0f)
                         return Result.success(
                             RealProxyLatencyMeasurement(
                                 medianLatencyMs = computeMedianLatencyMs(samples),
                                 sampleLatenciesMs = samples.toList(),
                                 warmupLatencyMs = warmupMs,
-                                targetUrl = candidateUrl
+                                targetUrl = candidateUrl,
+                                jitterMs = RealProxyLatencyMeasurement.computeJitter(samples),
+                                packetLossRate = packetLoss,
+                                successRate = successRate
                             )
                         )
                     }
@@ -1016,12 +1036,18 @@ object XrayNativeBridge {
                             }
 
                             if (samples.isNotEmpty()) {
+                                val targetCount = sampleCount.coerceIn(1, 5)
+                                val packetLoss = ((targetCount - samples.size).toFloat() / targetCount.toFloat()).coerceIn(0.0f, 1.0f)
+                                val successRate = (samples.size.toFloat() / targetCount.toFloat()).coerceIn(0.0f, 1.0f)
                                 return Result.success(
                                     RealProxyLatencyMeasurement(
                                         medianLatencyMs = computeMedianLatencyMs(samples),
                                         sampleLatenciesMs = samples.toList(),
                                         warmupLatencyMs = warmupMs,
-                                        targetUrl = candidateUrl
+                                        targetUrl = candidateUrl,
+                                        jitterMs = RealProxyLatencyMeasurement.computeJitter(samples),
+                                        packetLossRate = packetLoss,
+                                        successRate = successRate
                                     )
                                 )
                             }
@@ -1068,12 +1094,18 @@ object XrayNativeBridge {
                     }
                 }
                 if (samples.isNotEmpty()) {
+                    val targetCount = sampleCount.coerceIn(1, 5)
+                    val packetLoss = ((targetCount - samples.size).toFloat() / targetCount.toFloat()).coerceIn(0.0f, 1.0f)
+                    val successRate = (samples.size.toFloat() / targetCount.toFloat()).coerceIn(0.0f, 1.0f)
                     return Result.success(
                         RealProxyLatencyMeasurement(
                             medianLatencyMs = computeMedianLatencyMs(samples),
                             sampleLatenciesMs = samples.toList(),
                             warmupLatencyMs = warmupMs,
-                            targetUrl = candidateUrl
+                            targetUrl = candidateUrl,
+                            jitterMs = RealProxyLatencyMeasurement.computeJitter(samples),
+                            packetLossRate = packetLoss,
+                            successRate = successRate
                         )
                     )
                 }

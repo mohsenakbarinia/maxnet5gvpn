@@ -110,6 +110,54 @@ enum class ServerConnectionStatus(val labelEn: String, val labelFa: String) {
     FAILED("Unreachable", "ناموفق / خطا")
 }
 
+enum class SmartConnectionMode(
+    val id: String,
+    val titleEn: String,
+    val titleFa: String,
+    val descriptionEn: String,
+    val descriptionFa: String,
+    val iconEmoji: String
+) {
+    GAMING(
+        id = "gaming",
+        titleEn = "Gaming Mode",
+        titleFa = "حالت گیمینگ",
+        descriptionEn = "Ultra-low latency & minimal jitter for competitive gaming",
+        descriptionFa = "کمترین پینگ و حداقل نوسان (Jitter) ویژه بازی‌های آنلاین",
+        iconEmoji = "🎮"
+    ),
+    STREAMING(
+        id = "streaming",
+        titleEn = "Streaming Mode",
+        titleFa = "حالت استریم",
+        descriptionEn = "High sustained throughput & zero packet loss for 4K video",
+        descriptionFa = "حداکثر سرعت پایدار و بدون قطعی برای تماشای ویدیو و استریم",
+        iconEmoji = "🎬"
+    ),
+    BROWSING(
+        id = "browsing",
+        titleEn = "Browsing Mode",
+        titleFa = "حالت وبگردی",
+        descriptionEn = "Responsive DNS resolution & optimized battery efficiency",
+        descriptionFa = "پاسخ‌دهی سریع صفحات وب، ضد تبلیغ و مصرف بهینه باتری",
+        iconEmoji = "🌐"
+    ),
+    STABLE(
+        id = "stable",
+        titleEn = "Stable Mode",
+        titleFa = "حالت پایدار",
+        descriptionEn = "Maximum reliability, historical stability & anti-censorship",
+        descriptionFa = "بالاترین پایداری، مقاومت در برابر فیلترینگ و حداقل جابجایی سرور",
+        iconEmoji = "🛡️"
+    );
+
+    companion object {
+        fun fromId(id: String?): SmartConnectionMode {
+            return entries.firstOrNull { it.id.equals(id, ignoreCase = true) } ?: STABLE
+        }
+    }
+}
+
 enum class ThemePreference {
     SYSTEM,
     DARK,
@@ -151,6 +199,12 @@ data class ServerProfile(
     val sortOrder: Int = 0,
     val lastLatencyMs: Long? = null,
     val tcpConnectMs: Long? = null,
+    val jitterMs: Long? = null,
+    val packetLossRate: Float? = null,
+    val successRate: Float? = null,
+    val healthScore: Int? = null,
+    val consecutiveFailures: Int = 0,
+    val lastFailureTimestampMs: Long? = null,
     val latencyType: LatencyMeasureType = LatencyMeasureType.UNTESTED,
     val lastTestedAtMs: Long? = null,
     val userCustomizedRemarks: Boolean = false,
@@ -297,7 +351,10 @@ data class ConnectionHistoryItem(
     val disconnectedAt: Long?,
     val uploadBytes: Long,
     val downloadBytes: Long,
-    val statusNote: String
+    val statusNote: String,
+    val failoverReason: String? = null,
+    val activeMode: String = "STABLE",
+    val averageLatencyMs: Long? = null
 )
 
 data class AppSettings(
@@ -324,7 +381,14 @@ data class AppSettings(
     val onboardingCompleted: Boolean = true,
     val profileSortMode: String = "DEFAULT",
     val connectivityCheckUrl: String = "https://www.gstatic.com/generate_204",
-    val connectivityFallbackUrl: String = "https://cp.cloudflare.com/generate_204"
+    val connectivityFallbackUrl: String = "https://cp.cloudflare.com/generate_204",
+    val smartConnectionMode: SmartConnectionMode = SmartConnectionMode.STABLE,
+    val smartConnectEnabled: Boolean = true,
+    val autoFailoverEnabled: Boolean = true,
+    val killSwitchEnabled: Boolean = false,
+    val dnsLeakProtection: Boolean = true,
+    val ipv6LeakProtection: Boolean = true,
+    val secureDnsProvider: String = "Cloudflare"
 )
 
 enum class QualityTestStage {

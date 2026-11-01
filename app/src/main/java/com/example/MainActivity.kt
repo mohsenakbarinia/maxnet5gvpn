@@ -197,6 +197,9 @@ fun MaxNetAppRoot(viewModel: MaxNetViewModel) {
     val qualityReport by viewModel.qualityReportState.collectAsStateWithLifecycle()
     val autoVpnStatus by viewModel.autoVpnStatusState.collectAsStateWithLifecycle()
     val dualSyncState by viewModel.dualSyncState.collectAsStateWithLifecycle()
+    val smartSelectionResult by viewModel.smartSelectionResultState.collectAsStateWithLifecycle()
+    val securityAudit by viewModel.securityAuditState.collectAsStateWithLifecycle()
+    val connectionHistory by viewModel.connectionHistoryState.collectAsStateWithLifecycle()
 
     var currentTab by rememberSaveable { mutableStateOf(MaxNetDestination.HOME) }
 
@@ -369,8 +372,13 @@ fun MaxNetAppRoot(viewModel: MaxNetViewModel) {
                                 dualSyncState = dualSyncState,
                                 speedHistory = speedHistory,
                                 settings = settings,
+                                smartSelectionResult = smartSelectionResult,
+                                securityAudit = securityAudit,
+                                connectionHistory = connectionHistory,
                                 onSwitchVpnMode = viewModel::switchVpnMode,
+                                onSelectSmartMode = viewModel::setSmartConnectionMode,
                                 onToggleConnect = handleConnectToggle,
+                                onSmartConnect = { viewModel.smartConnect() },
                                 onTestActiveLatency = { viewModel.testSingleProfileLatency(it) },
                                 onAutoSelectBest = { viewModel.testAllProfilesLatency(autoSelectBest = true) },
                                 onRefreshFreeVpn = viewModel::refreshFreeVpnConfigurations,
@@ -382,6 +390,12 @@ fun MaxNetAppRoot(viewModel: MaxNetViewModel) {
                                     val nextLang = if (settings.languageCode.startsWith("fa")) "en-US" else "fa-IR"
                                     viewModel.setLanguage(nextLang)
                                 },
+                                onToggleKillSwitch = viewModel::setKillSwitch,
+                                onToggleDnsLeakProtection = viewModel::setDnsLeakProtection,
+                                onToggleIpv6LeakProtection = viewModel::setIpv6LeakProtection,
+                                onSetSecureDnsProvider = viewModel::setSecureDnsProvider,
+                                onToggleAutoFailover = viewModel::setAutoFailover,
+                                onClearConnectionHistory = viewModel::clearConnectionHistory,
                                 onNavigateToProfiles = { currentTab = MaxNetDestination.PROFILES },
                                 onNavigateToSettings = { currentTab = MaxNetDestination.SETTINGS },
                                 onCompleteOnboarding = { viewModel.completeOnboarding() }
@@ -495,6 +509,11 @@ fun MaxNetAppRoot(viewModel: MaxNetViewModel) {
                                 onSetFontScale = viewModel::setFontScale,
                                 onSetAutoReconnect = viewModel::setAutoReconnect,
                                 onSetConnectOnBoot = viewModel::setConnectOnBoot,
+                                onToggleKillSwitch = viewModel::setKillSwitch,
+                                onToggleDnsLeakProtection = viewModel::setDnsLeakProtection,
+                                onToggleIpv6LeakProtection = viewModel::setIpv6LeakProtection,
+                                onToggleAutoFailover = viewModel::setAutoFailover,
+                                onSetSecureDnsProvider = viewModel::setSecureDnsProvider,
                                 onExportBackup = { viewModel.repository.exportBackupJson() },
                                 onRestoreBackup = { raw ->
                                     scope.launch {

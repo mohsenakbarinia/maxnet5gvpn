@@ -57,6 +57,12 @@ data class ProfileEntity(
     val sortOrder: Int = 0,
     val lastLatencyMs: Long? = null,
     val tcpConnectMs: Long? = null,
+    val jitterMs: Long? = null,
+    val packetLossRate: Float? = null,
+    val successRate: Float? = null,
+    val healthScore: Int? = null,
+    val consecutiveFailures: Int = 0,
+    val lastFailureTimestampMs: Long? = null,
     val latencyType: String = LatencyMeasureType.UNTESTED.name,
     val lastTestedAtMs: Long? = null,
     val userCustomizedRemarks: Boolean = false,
@@ -96,6 +102,12 @@ data class ProfileEntity(
             sortOrder = sortOrder,
             lastLatencyMs = lastLatencyMs,
             tcpConnectMs = tcpConnectMs,
+            jitterMs = jitterMs,
+            packetLossRate = packetLossRate,
+            successRate = successRate,
+            healthScore = healthScore,
+            consecutiveFailures = consecutiveFailures,
+            lastFailureTimestampMs = lastFailureTimestampMs,
             latencyType = runCatching { LatencyMeasureType.valueOf(latencyType) }.getOrDefault(LatencyMeasureType.UNTESTED),
             lastTestedAtMs = lastTestedAtMs,
             userCustomizedRemarks = userCustomizedRemarks,
@@ -138,6 +150,12 @@ data class ProfileEntity(
                 sortOrder = profile.sortOrder,
                 lastLatencyMs = profile.lastLatencyMs,
                 tcpConnectMs = profile.tcpConnectMs,
+                jitterMs = profile.jitterMs,
+                packetLossRate = profile.packetLossRate,
+                successRate = profile.successRate,
+                healthScore = profile.healthScore,
+                consecutiveFailures = profile.consecutiveFailures,
+                lastFailureTimestampMs = profile.lastFailureTimestampMs,
                 latencyType = profile.latencyType.name,
                 lastTestedAtMs = profile.lastTestedAtMs,
                 userCustomizedRemarks = profile.userCustomizedRemarks,
@@ -274,7 +292,10 @@ data class ConnectionHistoryEntity(
     val disconnectedAt: Long?,
     val uploadBytes: Long,
     val downloadBytes: Long,
-    val statusNote: String
+    val statusNote: String,
+    val failoverReason: String? = null,
+    val activeMode: String = "STABLE",
+    val averageLatencyMs: Long? = null
 ) {
     fun toDomain(): ConnectionHistoryItem {
         return ConnectionHistoryItem(
@@ -286,7 +307,29 @@ data class ConnectionHistoryEntity(
             disconnectedAt = disconnectedAt,
             uploadBytes = uploadBytes,
             downloadBytes = downloadBytes,
-            statusNote = statusNote
+            statusNote = statusNote,
+            failoverReason = failoverReason,
+            activeMode = activeMode,
+            averageLatencyMs = averageLatencyMs
         )
+    }
+
+    companion object {
+        fun fromDomain(item: ConnectionHistoryItem): ConnectionHistoryEntity {
+            return ConnectionHistoryEntity(
+                id = item.id,
+                profileName = item.profileName,
+                protocol = item.protocol,
+                engine = item.engine,
+                connectedAt = item.connectedAt,
+                disconnectedAt = item.disconnectedAt,
+                uploadBytes = item.uploadBytes,
+                downloadBytes = item.downloadBytes,
+                statusNote = item.statusNote,
+                failoverReason = item.failoverReason,
+                activeMode = item.activeMode,
+                averageLatencyMs = item.averageLatencyMs
+            )
+        }
     }
 }

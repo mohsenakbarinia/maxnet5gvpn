@@ -143,6 +143,29 @@ interface MaxNetDao {
     @Query("SELECT * FROM connection_history ORDER BY connectedAt DESC LIMIT 100")
     fun observeConnectionHistory(): Flow<List<ConnectionHistoryEntity>>
 
+    @Query("SELECT * FROM connection_history ORDER BY connectedAt DESC LIMIT :limit")
+    suspend fun getRecentConnectionHistory(limit: Int = 50): List<ConnectionHistoryEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertConnectionHistory(entry: ConnectionHistoryEntity): Long
+
+    @Query("DELETE FROM connection_history")
+    suspend fun clearConnectionHistory()
+
+    @Query(
+        "UPDATE profiles SET lastLatencyMs = :latencyMs, tcpConnectMs = COALESCE(:tcpConnectMs, tcpConnectMs), jitterMs = :jitterMs, packetLossRate = :packetLossRate, successRate = :successRate, healthScore = :healthScore, consecutiveFailures = :consecutiveFailures, lastFailureTimestampMs = :lastFailureMs, latencyType = :measureType, lastTestedAtMs = :testedAtMs WHERE id = :id"
+    )
+    suspend fun updateProfileSmartMetrics(
+        id: Long,
+        latencyMs: Long?,
+        tcpConnectMs: Long?,
+        jitterMs: Long?,
+        packetLossRate: Float?,
+        successRate: Float?,
+        healthScore: Int?,
+        consecutiveFailures: Int,
+        lastFailureMs: Long?,
+        measureType: String,
+        testedAtMs: Long = System.currentTimeMillis()
+    )
 }

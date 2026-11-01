@@ -253,6 +253,11 @@ fun SettingsAndAboutScreen(
     onSetFontScale: (Float) -> Unit,
     onSetAutoReconnect: (Boolean) -> Unit,
     onSetConnectOnBoot: (Boolean) -> Unit,
+    onToggleKillSwitch: (Boolean) -> Unit = {},
+    onToggleDnsLeakProtection: (Boolean) -> Unit = {},
+    onToggleIpv6LeakProtection: (Boolean) -> Unit = {},
+    onToggleAutoFailover: (Boolean) -> Unit = {},
+    onSetSecureDnsProvider: (String) -> Unit = {},
     onExportBackup: suspend () -> String,
     onRestoreBackup: (String) -> Unit,
     onCheckUpdates: () -> Unit,
@@ -413,6 +418,38 @@ fun SettingsAndAboutScreen(
                 ) {
                     Text(stringResource(R.string.connect_on_boot), modifier = Modifier.weight(1f))
                     Switch(checked = settings.connectOnBoot, onCheckedChange = onSetConnectOnBoot)
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Kill Switch (Block Non-VPN Traffic)", modifier = Modifier.weight(1f))
+                    Switch(checked = settings.killSwitchEnabled, onCheckedChange = onToggleKillSwitch)
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("DNS Leak Protection (DoH)", modifier = Modifier.weight(1f))
+                    Switch(checked = settings.dnsLeakProtection, onCheckedChange = onToggleDnsLeakProtection)
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("IPv6 Leak Protection (Block IPv6)", modifier = Modifier.weight(1f))
+                    Switch(checked = settings.ipv6LeakProtection, onCheckedChange = onToggleIpv6LeakProtection)
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Auto Failover (Zero-Drop Recovery)", modifier = Modifier.weight(1f))
+                    Switch(checked = settings.autoFailoverEnabled, onCheckedChange = onToggleAutoFailover)
                 }
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(

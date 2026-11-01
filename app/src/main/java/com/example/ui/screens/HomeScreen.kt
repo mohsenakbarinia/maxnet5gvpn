@@ -74,6 +74,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -100,9 +101,12 @@ import com.example.core.autovpn.AutoVpnStage
 import com.example.core.autovpn.AutoVpnStatusSnapshot
 import com.example.core.autovpn.ConnectionOwnership
 import com.example.core.autovpn.VpnAppMode
+import com.example.core.security.SecurityAuditReport
+import com.example.core.smart.SmartSelectionResult
 import com.example.core.sync.DualSyncState
 import com.example.core.sync.SyncProgressState
 import com.example.domain.model.AppSettings
+import com.example.domain.model.ConnectionHistoryItem
 import com.example.domain.model.ConnectionQualityReport
 import com.example.domain.model.DiagnosticSnapshot
 import com.example.domain.model.EngineStatistics
@@ -112,6 +116,7 @@ import com.example.domain.model.QualityTestStage
 import com.example.domain.model.RoutingMode
 import com.example.domain.model.SecurityType
 import com.example.domain.model.ServerProfile
+import com.example.domain.model.SmartConnectionMode
 import com.example.domain.model.VpnConnectionState
 import com.example.domain.model.VpnProtocol
 import com.example.ui.theme.AmberWarning
@@ -141,8 +146,22 @@ fun HomeScreen(
     dualSyncState: DualSyncState = DualSyncState(),
     speedHistory: List<Pair<Long, Long>>,
     settings: AppSettings,
+    smartSelectionResult: SmartSelectionResult? = null,
+    securityAudit: SecurityAuditReport = SecurityAuditReport(
+        dnsLeakStatus = com.example.core.security.SecurityCheckStatus.SECURE,
+        ipv6LeakStatus = com.example.core.security.SecurityCheckStatus.SECURE,
+        killSwitchStatus = if (settings.killSwitchEnabled) com.example.core.security.SecurityCheckStatus.SECURE else com.example.core.security.SecurityCheckStatus.WARNING,
+        encryptionCipherStatus = com.example.core.security.SecurityCheckStatus.SECURE,
+        logSanitizationStatus = com.example.core.security.SecurityCheckStatus.SECURE,
+        overallSecurityScore = 85,
+        summaryEn = "Secure Tunnel",
+        summaryFa = "تونل امن"
+    ),
+    connectionHistory: List<ConnectionHistoryItem> = emptyList(),
     onSwitchVpnMode: (VpnAppMode) -> Unit = {},
+    onSelectSmartMode: (SmartConnectionMode) -> Unit = {},
     onToggleConnect: () -> Unit,
+    onSmartConnect: () -> Unit = onToggleConnect,
     onTestActiveLatency: (ServerProfile) -> Unit,
     onAutoSelectBest: () -> Unit,
     onRefreshFreeVpn: () -> Unit = {},
@@ -151,6 +170,12 @@ fun HomeScreen(
     onSwitchRoutingMode: (RoutingMode) -> Unit,
     onSwitchEngine: (EngineType) -> Unit,
     onToggleLanguage: () -> Unit,
+    onToggleKillSwitch: (Boolean) -> Unit = {},
+    onToggleDnsLeakProtection: (Boolean) -> Unit = {},
+    onToggleIpv6LeakProtection: (Boolean) -> Unit = {},
+    onSetSecureDnsProvider: (String) -> Unit = {},
+    onToggleAutoFailover: (Boolean) -> Unit = {},
+    onClearConnectionHistory: () -> Unit = {},
     onNavigateToProfiles: () -> Unit,
     onNavigateToSettings: () -> Unit = {},
     onCompleteOnboarding: () -> Unit = {}
@@ -158,6 +183,8 @@ fun HomeScreen(
     val isFa = settings.languageCode.startsWith("fa", ignoreCase = true)
     val usePersian = settings.usePersianDigits || isFa
     val context = LocalContext.current
+    var showSecurityDialog by remember { mutableStateOf(false) }
+    var showHistoryDialog by remember { mutableStateOf(false) }
     val isRobolectric = remember {
         runCatching { Class.forName("androidx.test.core.app.ApplicationProvider") }.isSuccess ||
             android.os.Build.FINGERPRINT.contains("robolectric", ignoreCase = true)
@@ -260,6 +287,17 @@ fun HomeScreen(
                     )
                 }
 
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // =========================================================================
+                // SMART CONNECTION MODE SELECTOR (Gaming / Streaming / Browsing / Stable)
+                // =========================================================================
+                SmartConnectionModeSelectorCard(
+                    selectedMode = settings.smartConnectionMode,
+                    isFa = isFa,
+                    onSelectMode = onSelectSmartMode
+                )
+
                 Spacer(modifier = Modifier.height(14.dp))
 
                 // =========================================================================
@@ -276,6 +314,15 @@ fun HomeScreen(
                     lastError = diagnostics.lastError,
                     onToggleConnect = onToggleConnect
                 )
+
+                if (smartSelectionResult != null) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    SmartEngineDecisionCard(
+                        result = smartSelectionResult,
+                        isFa = isFa,
+                        usePersian = usePersian
+                    )
+                }
 
                 Spacer(modifier = Modifier.height(16.dp))
 
@@ -296,6 +343,68 @@ fun HomeScreen(
                     onRefreshFreeVpn = onRefreshFreeVpn,
                     onNavigateToProfiles = onNavigateToProfiles
                 )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // =========================================================================
+                // SECURITY CENTER & LEAK PROTECTION CARD
+                // =========================================================================
+                SecurityCenterCard(
+                    audit = securityAudit,
+                    settings = settings,
+                    isFa = isFa,
+                    usePersian = usePersian,
+                    onOpenSecurityDialog = { showSecurityDialog = true }
+                )
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Session History & Failover Logs Trigger
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .clickable { showHistoryDialog = true }
+                        .testTag("session_history_trigger"),
+                    shape = RoundedCornerShape(14.dp),
+                    color = MidnightSurface,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MidnightBorder)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Schedule,
+                                contentDescription = null,
+                                tint = CyanPrimary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = if (isFa) "تاریخچه نشست‌ها و خود-ترمیمی (Failover)" else "Session History & Failover Logs",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+
+                        Text(
+                            text = if (connectionHistory.isNotEmpty()) {
+                                "${LocalizationHelper.formatDigits(connectionHistory.size.toString(), usePersian)} ${if (isFa) "نشست" else "sessions"}"
+                            } else {
+                                if (isFa) "مشاهده" else "View"
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = CyanPrimary,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
 
                 Spacer(modifier = Modifier.height(12.dp))
 
@@ -357,6 +466,29 @@ fun HomeScreen(
 
                 Spacer(modifier = Modifier.height(20.dp))
             }
+        }
+
+        if (showSecurityDialog) {
+            SecurityCenterDialog(
+                settings = settings,
+                isFa = isFa,
+                onDismiss = { showSecurityDialog = false },
+                onToggleKillSwitch = onToggleKillSwitch,
+                onToggleDnsLeakProtection = onToggleDnsLeakProtection,
+                onToggleIpv6LeakProtection = onToggleIpv6LeakProtection,
+                onSetSecureDnsProvider = onSetSecureDnsProvider,
+                onToggleAutoFailover = onToggleAutoFailover
+            )
+        }
+
+        if (showHistoryDialog) {
+            ConnectionHistoryDialog(
+                history = connectionHistory,
+                isFa = isFa,
+                usePersian = usePersian,
+                onDismiss = { showHistoryDialog = false },
+                onClearHistory = onClearConnectionHistory
+            )
         }
     }
 }

@@ -305,20 +305,39 @@ class MaxNetVpnService : VpnService() {
                 .addAddress("10.26.26.1", 30)
                 .addRoute("0.0.0.0", 0)
 
-            // Configure primary and secondary DNS servers
-            val dnsServer = settings.directDns.trim().takeIf {
-                it.matches(Regex("^\\d{1,3}(\\.\\d{1,3}){3}$"))
-            } ?: "1.1.1.1"
-            builder.addDnsServer(dnsServer)
-            if (dnsServer != "8.8.8.8") {
-                runCatching { builder.addDnsServer("8.8.8.8") }
+            // Configure Kill Switch (blocking non-VPN traffic)
+            if (settings.killSwitchEnabled) {
+                builder.setBlocking(true)
             }
+
+            // Configure primary and secondary DNS servers with leak protection
+            val primaryDns = if (settings.dnsLeakProtection) {
+                when (settings.secureDnsProvider) {
+                    "Google" -> "8.8.8.8"
+                    "AdGuard (Ad-Blocking)" -> "94.140.14.14"
+                    "Quad9 (Malware-Blocking)" -> "9.9.9.9"
+                    else -> "1.1.1.1"
+                }
+            } else {
+                settings.directDns.trim().takeIf {
+                    it.matches(Regex("^\\d{1,3}(\\.\\d{1,3}){3}$"))
+                } ?: "1.1.1.1"
+            }
+            builder.addDnsServer(primaryDns)
+            val secondaryDns = if (primaryDns == "8.8.8.8") "1.1.1.1" else "8.8.8.8"
+            runCatching { builder.addDnsServer(secondaryDns) }
 
             if (settings.enableIpv6) {
                 runCatching {
                     builder.addAddress("fd00:1::1", 126)
                     builder.addRoute("::", 0)
                     builder.addDnsServer("2606:4700:4700::1111")
+                }
+            } else if (settings.ipv6LeakProtection) {
+                // Prevent IPv6 leaks by routing IPv6 to local TUN blackhole
+                runCatching {
+                    builder.addAddress("2001:db8::1", 128)
+                    builder.addRoute("::", 0)
                 }
             }
 

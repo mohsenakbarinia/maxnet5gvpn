@@ -46,6 +46,13 @@ class SettingsDataStore(private val context: Context) {
         val CONNECT_ON_BOOT = booleanPreferencesKey("connect_on_boot")
         val ONBOARDING_COMPLETED = booleanPreferencesKey("onboarding_completed")
         val PROFILE_SORT_MODE = stringPreferencesKey("profile_sort_mode")
+        val SMART_CONNECTION_MODE = stringPreferencesKey("smart_connection_mode")
+        val SMART_CONNECT_ENABLED = booleanPreferencesKey("smart_connect_enabled")
+        val AUTO_FAILOVER_ENABLED = booleanPreferencesKey("auto_failover_enabled")
+        val KILL_SWITCH_ENABLED = booleanPreferencesKey("kill_switch_enabled")
+        val DNS_LEAK_PROTECTION = booleanPreferencesKey("dns_leak_protection")
+        val IPV6_LEAK_PROTECTION = booleanPreferencesKey("ipv6_leak_protection")
+        val SECURE_DNS_PROVIDER = stringPreferencesKey("secure_dns_provider")
     }
 
     val settingsFlow: Flow<AppSettings> = context.dataStore.data.map { prefs ->
@@ -79,7 +86,14 @@ class SettingsDataStore(private val context: Context) {
             autoReconnect = prefs[Keys.AUTO_RECONNECT] ?: true,
             connectOnBoot = prefs[Keys.CONNECT_ON_BOOT] ?: false,
             onboardingCompleted = prefs[Keys.ONBOARDING_COMPLETED] ?: true,
-            profileSortMode = prefs[Keys.PROFILE_SORT_MODE] ?: "DEFAULT"
+            profileSortMode = prefs[Keys.PROFILE_SORT_MODE] ?: "DEFAULT",
+            smartConnectionMode = com.example.domain.model.SmartConnectionMode.fromId(prefs[Keys.SMART_CONNECTION_MODE]),
+            smartConnectEnabled = prefs[Keys.SMART_CONNECT_ENABLED] ?: true,
+            autoFailoverEnabled = prefs[Keys.AUTO_FAILOVER_ENABLED] ?: true,
+            killSwitchEnabled = prefs[Keys.KILL_SWITCH_ENABLED] ?: false,
+            dnsLeakProtection = prefs[Keys.DNS_LEAK_PROTECTION] ?: true,
+            ipv6LeakProtection = prefs[Keys.IPV6_LEAK_PROTECTION] ?: true,
+            secureDnsProvider = prefs[Keys.SECURE_DNS_PROVIDER] ?: "Cloudflare"
         )
     }
 
@@ -140,6 +154,13 @@ class SettingsDataStore(private val context: Context) {
             prefs[Keys.CONNECT_ON_BOOT] = updated.connectOnBoot
             prefs[Keys.ONBOARDING_COMPLETED] = updated.onboardingCompleted
             prefs[Keys.PROFILE_SORT_MODE] = updated.profileSortMode
+            prefs[Keys.SMART_CONNECTION_MODE] = updated.smartConnectionMode.id
+            prefs[Keys.SMART_CONNECT_ENABLED] = updated.smartConnectEnabled
+            prefs[Keys.AUTO_FAILOVER_ENABLED] = updated.autoFailoverEnabled
+            prefs[Keys.KILL_SWITCH_ENABLED] = updated.killSwitchEnabled
+            prefs[Keys.DNS_LEAK_PROTECTION] = updated.dnsLeakProtection
+            prefs[Keys.IPV6_LEAK_PROTECTION] = updated.ipv6LeakProtection
+            prefs[Keys.SECURE_DNS_PROVIDER] = updated.secureDnsProvider
         }
     }
 }

@@ -41,6 +41,13 @@ import com.example.domain.model.SubscriptionFormat
 import com.example.domain.model.LatencyMeasureType
 import com.example.domain.model.SubscriptionImportReport
 import com.example.domain.model.SubscriptionItem
+import com.example.core.smart.SmartEngine
+import com.example.core.smart.SmartFailoverManager
+import com.example.core.smart.SmartSelectionResult
+import com.example.core.security.SecurityCenter
+import com.example.core.security.SecurityAuditReport
+import com.example.domain.model.ConnectionHistoryItem
+import com.example.domain.model.SmartConnectionMode
 import com.example.domain.model.ThemePreference
 import com.example.domain.model.VpnConnectionState
 import com.example.domain.model.VpnProtocol
@@ -368,6 +375,33 @@ class MaxNetViewModel(application: Application) : AndroidViewModel(application) 
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
+    val smartFailoverManager = SmartFailoverManager(
+        context = application,
+        externalScope = viewModelScope,
+        onLog = { level, tag, msg -> repository.appendLog(level, tag, msg) }
+    )
+
+    private val _smartSelectionResult = MutableStateFlow<SmartSelectionResult?>(null)
+    val smartSelectionResultState: StateFlow<SmartSelectionResult?> = _smartSelectionResult.asStateFlow()
+
+    val securityAuditState: StateFlow<SecurityAuditReport> = combine(
+        activeProfileState,
+        settingsState,
+        connectionState
+    ) { profile, settings, connState ->
+        SecurityCenter.auditSecurityPosture(profile, settings, connState)
+    }.stateIn(
+        viewModelScope,
+        SharingStarted.WhileSubscribed(5000),
+        SecurityCenter.auditSecurityPosture(null, AppSettings(), VpnConnectionState.DISCONNECTED)
+    )
+
+    val connectionHistoryState: StateFlow<List<ConnectionHistoryItem>> = repository.historyFlow.stateIn(
+        viewModelScope,
+        SharingStarted.WhileSubscribed(5000),
+        emptyList()
+    )
+
     init {
         SubscriptionUpdateWorker.schedulePeriodicUpdates(application)
         viewModelScope.launch {
@@ -398,6 +432,59 @@ class MaxNetViewModel(application: Application) : AndroidViewModel(application) 
                         connectionState = state,
                         verifiedLatencyMs = verifiedLatency
                     )
+                }
+            }
+        }
+        viewModelScope.launch {
+            connectionState.collect { state ->
+                if (state == VpnConnectionState.CONNECTED) {
+                    val profile = activeProfileState.value
+                    if (profile != null) {
+                        smartFailoverManager.startActiveMonitoring(
+                            profile = profile,
+                            settings = settingsState.value,
+                            getCandidates = {
+                                if (selectedVpnModeState.value == VpnAppMode.MY_VPN) {
+                                    repository.getAllProfilesSnapshot()
+                                } else {
+                                    autoFreeVpnManager.cacheStore.getCachedValidatedProfiles()
+                                }
+                            },
+                            onTriggerReconnect = { nextProfile, failoverReason ->
+                                repository.recordConnectionSession(
+                                    profileName = profile.remarks,
+                                    protocol = profile.protocol.displayName,
+                                    engine = settingsState.value.activeEngine.displayName,
+                                    connectedAt = statisticsState.value.connectedSinceMs ?: System.currentTimeMillis(),
+                                    disconnectedAt = System.currentTimeMillis(),
+                                    uploadBytes = statisticsState.value.sessionUploadBytes,
+                                    downloadBytes = statisticsState.value.sessionDownloadBytes,
+                                    statusNote = failoverReason,
+                                    failoverReason = failoverReason,
+                                    activeMode = settingsState.value.smartConnectionMode.name,
+                                    averageLatencyMs = profile.lastLatencyMs
+                                )
+
+                                if (selectedVpnModeState.value == VpnAppMode.MY_VPN) {
+                                    repository.selectProfile(nextProfile.id)
+                                } else {
+                                    VpnController.setActiveFreeProfile(nextProfile)
+                                }
+                                val res = VpnController.startSession(
+                                    context = getApplication(),
+                                    profile = nextProfile,
+                                    settings = settingsState.value,
+                                    rules = routingRulesState.value,
+                                    ownership = if (selectedVpnModeState.value == VpnAppMode.MY_VPN) ConnectionOwnership.PERSONAL else ConnectionOwnership.FREE,
+                                    verifyConnectivity = true,
+                                    onLog = { level, tag, msg -> repository.appendLog(level, tag, msg) }
+                                )
+                                res.isSuccess
+                            }
+                        )
+                    }
+                } else if (state == VpnConnectionState.DISCONNECTED || state == VpnConnectionState.ERROR) {
+                    smartFailoverManager.stopMonitoring()
                 }
             }
         }
@@ -780,6 +867,136 @@ class MaxNetViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    /**
+     * Executes Smart Connect:
+     * 1. Evaluates candidates based on the active mode (Free VPN vs My VPN).
+     * 2. Runs [SmartEngine.selectBestServer] with multi-metric scoring (latency, jitter, packet loss, stability).
+     * 3. Explains why the server was chosen in Persian/English.
+     * 4. Establishes the VPN connection.
+     */
+    fun smartConnect(verifyConnectivity: Boolean = true) {
+        viewModelScope.launch {
+            val mode = selectedVpnModeState.value
+            val connMode = settingsState.value.smartConnectionMode
+            val isFa = settingsState.value.languageCode.startsWith("fa", ignoreCase = true)
+
+            if (mode == VpnAppMode.MY_VPN) {
+                val personalProfiles = repository.getAllProfilesSnapshot()
+                if (personalProfiles.isEmpty()) {
+                    showMessage(
+                        if (isFa) "هیچ پروفایل شخصی یافت نشد. لطفاً ابتدا کانفیگ یا اشتراک اضافه کنید."
+                        else "No personal profiles found. Please import a config or subscription first."
+                    )
+                    return@launch
+                }
+
+                val selection = SmartEngine.selectBestServer(
+                    candidates = personalProfiles,
+                    mode = connMode,
+                    currentActiveFingerprint = activeProfileState.value?.uniqueFingerprintKey()
+                )
+
+                if (selection != null) {
+                    _smartSelectionResult.value = selection
+                    repository.selectProfile(selection.selectedProfile.id)
+                    showMessage(if (isFa) selection.explanationFa else selection.explanationEn)
+                }
+                toggleDirectEngineConnection(verifyConnectivity = verifyConnectivity)
+            } else {
+                val cached = autoFreeVpnManager.cacheStore.getCachedValidatedProfiles()
+                val selection = SmartEngine.selectBestServer(
+                    candidates = cached,
+                    mode = connMode,
+                    currentActiveFingerprint = activeProfileState.value?.uniqueFingerprintKey()
+                )
+                if (selection != null) {
+                    _smartSelectionResult.value = selection
+                    showMessage(if (isFa) selection.explanationFa else selection.explanationEn)
+                }
+                toggleDirectEngineConnection(verifyConnectivity = verifyConnectivity)
+            }
+        }
+    }
+
+    fun setSmartConnectionMode(mode: SmartConnectionMode) {
+        viewModelScope.launch {
+            repository.updateSettings { it.copy(smartConnectionMode = mode) }
+            val isFa = settingsState.value.languageCode.startsWith("fa", ignoreCase = true)
+            showMessage(
+                if (isFa) "حالت اتصال هوشمند به «${mode.titleFa}» تغییر یافت"
+                else "Smart connection mode changed to ${mode.titleEn}"
+            )
+            activeProfileState.value?.let { profile ->
+                val newScore = SmartEngine.calculateServerScore(profile, mode)
+                val (en, fa) = SmartEngine.generateSelectionExplanation(profile, mode, newScore)
+                _smartSelectionResult.value = SmartSelectionResult(
+                    selectedProfile = profile,
+                    score = newScore,
+                    mode = mode,
+                    explanationEn = en,
+                    explanationFa = fa,
+                    latencyMs = profile.realVpnLatencyMs ?: profile.lastLatencyMs,
+                    jitterMs = profile.jitterMs,
+                    packetLossRate = profile.packetLossRate,
+                    candidateCount = 1
+                )
+            }
+        }
+    }
+
+    fun setKillSwitch(enabled: Boolean) {
+        viewModelScope.launch {
+            repository.updateSettings { it.copy(killSwitchEnabled = enabled) }
+            val isFa = settingsState.value.languageCode.startsWith("fa", ignoreCase = true)
+            showMessage(
+                if (enabled) {
+                    if (isFa) "سوئیچ قطع اضطراری (Kill Switch) فعال شد" else "Kill Switch activated"
+                } else {
+                    if (isFa) "سوئیچ قطع اضطراری غیرفعال شد" else "Kill Switch deactivated"
+                }
+            )
+        }
+    }
+
+    fun setDnsLeakProtection(enabled: Boolean) {
+        viewModelScope.launch {
+            repository.updateSettings { it.copy(dnsLeakProtection = enabled) }
+        }
+    }
+
+    fun setIpv6LeakProtection(enabled: Boolean) {
+        viewModelScope.launch {
+            repository.updateSettings { it.copy(ipv6LeakProtection = enabled) }
+        }
+    }
+
+    fun setSecureDnsProvider(provider: String) {
+        viewModelScope.launch {
+            val endpoint = SecurityCenter.SECURE_DNS_PROVIDERS
+                .firstOrNull { it.first == provider }?.second ?: "https://1.1.1.1/dns-query"
+            repository.updateSettings {
+                it.copy(
+                    secureDnsProvider = provider,
+                    remoteDns = endpoint
+                )
+            }
+        }
+    }
+
+    fun setAutoFailover(enabled: Boolean) {
+        viewModelScope.launch {
+            repository.updateSettings { it.copy(autoFailoverEnabled = enabled) }
+        }
+    }
+
+    fun clearConnectionHistory() {
+        viewModelScope.launch {
+            repository.clearConnectionHistory()
+            val isFa = settingsState.value.languageCode.startsWith("fa", ignoreCase = true)
+            showMessage(if (isFa) "تاریخچه اتصالات پاک شد" else "Connection history cleared")
+        }
+    }
+
     // Latency Testing & Best Server Selection (Real VPN Latency via Xray-core HTTP 204)
     fun testSingleProfileLatency(
         profile: ServerProfile,
@@ -809,11 +1026,24 @@ class MaxNetViewModel(application: Application) : AndroidViewModel(application) 
                 }
             }
             if (profile.id > 0L) {
-                repository.updateProfileLatencyAndDiagnostics(
+                repository.updateProfileSmartMetrics(
                     id = profile.id,
                     latencyMs = outcome.latencyMs,
                     tcpConnectMs = outcome.tcpConnectMs,
-                    measureType = outcome.measureType,
+                    jitterMs = outcome.jitterMs,
+                    packetLossRate = outcome.packetLossRate,
+                    successRate = outcome.successRate,
+                    healthScore = SmartEngine.calculateServerScore(
+                        profile.copy(
+                            lastLatencyMs = outcome.latencyMs,
+                            jitterMs = outcome.jitterMs,
+                            packetLossRate = outcome.packetLossRate
+                        ),
+                        settingsState.value.smartConnectionMode
+                    ),
+                    consecutiveFailures = if (outcome.latencyMs != null) 0 else (profile.consecutiveFailures + 1),
+                    lastFailureMs = if (outcome.latencyMs == null) System.currentTimeMillis() else null,
+                    measureType = outcome.measureType.name,
                     testedAtMs = outcome.testedAtMs
                 )
                 _liveMeasuredProfileIds.value = _liveMeasuredProfileIds.value + profile.id
@@ -821,6 +1051,9 @@ class MaxNetViewModel(application: Application) : AndroidViewModel(application) 
                 val updatedProfile = profile.copy(
                     lastLatencyMs = outcome.latencyMs,
                     tcpConnectMs = outcome.tcpConnectMs,
+                    jitterMs = outcome.jitterMs,
+                    packetLossRate = outcome.packetLossRate,
+                    successRate = outcome.successRate,
                     latencyType = outcome.measureType,
                     lastTestedAtMs = outcome.testedAtMs
                 )

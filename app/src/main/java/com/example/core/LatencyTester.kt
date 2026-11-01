@@ -31,6 +31,9 @@ data class LatencyTestOutcome(
         else -> ServerConnectionStatus.UNTESTED
     },
     val sampleLatenciesMs: List<Long> = emptyList(),
+    val jitterMs: Long? = null,
+    val packetLossRate: Float? = null,
+    val successRate: Float? = null,
     val testedAtMs: Long = System.currentTimeMillis()
 )
 
@@ -260,6 +263,9 @@ object LatencyTester {
                     tcpConnectMs = tcpMs,
                     connectionStatus = ServerConnectionStatus.ALIVE,
                     sampleLatenciesMs = measurement.sampleLatenciesMs,
+                    jitterMs = measurement.jitterMs,
+                    packetLossRate = measurement.packetLossRate,
+                    successRate = measurement.successRate,
                     testedAtMs = System.currentTimeMillis()
                 )
             },
@@ -271,6 +277,9 @@ object LatencyTester {
                     tcpConnectMs = tcpMs,
                     connectionStatus = ServerConnectionStatus.FAILED,
                     errorReason = err.message ?: "Real Xray proxy HTTP 204 test failed",
+                    jitterMs = null,
+                    packetLossRate = 1.0f,
+                    successRate = 0.0f,
                     testedAtMs = System.currentTimeMillis()
                 )
             }

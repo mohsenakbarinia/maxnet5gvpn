@@ -297,7 +297,10 @@ class VpnRepository(
         disconnectedAt: Long?,
         uploadBytes: Long,
         downloadBytes: Long,
-        statusNote: String
+        statusNote: String,
+        failoverReason: String? = null,
+        activeMode: String = "STABLE",
+        averageLatencyMs: Long? = null
     ) = withContext(Dispatchers.IO) {
         dao.insertConnectionHistory(
             ConnectionHistoryEntity(
@@ -308,8 +311,48 @@ class VpnRepository(
                 disconnectedAt = disconnectedAt,
                 uploadBytes = uploadBytes,
                 downloadBytes = downloadBytes,
-                statusNote = statusNote
+                statusNote = statusNote,
+                failoverReason = failoverReason,
+                activeMode = activeMode,
+                averageLatencyMs = averageLatencyMs
             )
+        )
+    }
+
+    suspend fun clearConnectionHistory() = withContext(Dispatchers.IO) {
+        dao.clearConnectionHistory()
+        appendLog("INFO", "Analytics", "Connection history cleared by user")
+    }
+
+    suspend fun getRecentConnectionHistory(limit: Int = 50): List<ConnectionHistoryItem> = withContext(Dispatchers.IO) {
+        dao.getRecentConnectionHistory(limit).map { it.toDomain() }
+    }
+
+    suspend fun updateProfileSmartMetrics(
+        id: Long,
+        latencyMs: Long?,
+        tcpConnectMs: Long?,
+        jitterMs: Long?,
+        packetLossRate: Float?,
+        successRate: Float?,
+        healthScore: Int?,
+        consecutiveFailures: Int,
+        lastFailureMs: Long?,
+        measureType: String,
+        testedAtMs: Long = System.currentTimeMillis()
+    ) = withContext(Dispatchers.IO) {
+        dao.updateProfileSmartMetrics(
+            id = id,
+            latencyMs = latencyMs,
+            tcpConnectMs = tcpConnectMs,
+            jitterMs = jitterMs,
+            packetLossRate = packetLossRate,
+            successRate = successRate,
+            healthScore = healthScore,
+            consecutiveFailures = consecutiveFailures,
+            lastFailureMs = lastFailureMs,
+            measureType = measureType,
+            testedAtMs = testedAtMs
         )
     }
 
