@@ -371,6 +371,7 @@ fun MaxNetAppRoot(viewModel: MaxNetViewModel) {
                                 onToggleConnect = handleConnectToggle,
                                 onTestActiveLatency = { viewModel.testSingleProfileLatency(it) },
                                 onAutoSelectBest = { viewModel.testAllProfilesLatency(autoSelectBest = true) },
+                                onRefreshFreeVpn = viewModel::refreshFreeVpnConfigurations,
                                 onRunQualityTest = viewModel::runConnectionQualityTest,
                                 onCancelQualityTest = viewModel::cancelConnectionQualityTest,
                                 onSwitchRoutingMode = { viewModel.setRoutingMode(it) },

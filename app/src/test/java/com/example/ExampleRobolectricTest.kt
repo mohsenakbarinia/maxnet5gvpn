@@ -291,6 +291,7 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("connect_toggle_button").assertIsDisplayed()
         composeTestRule.onNodeWithTag("selected_server_card").assertIsDisplayed()
         composeTestRule.onNodeWithTag("auto_connection_quality_badge").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("refresh_free_vpn_button").performScrollTo().assertIsDisplayed()
 
         // Tap Connect in FREE VPN mode with ZERO personal profiles -> must auto-discover, test, rank, select, and connect!
         composeTestRule.onNodeWithTag("connect_toggle_button").performClick()

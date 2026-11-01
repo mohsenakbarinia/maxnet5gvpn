@@ -1,5 +1,7 @@
 package com.example
 
+import android.content.Context
+import androidx.test.core.app.ApplicationProvider
 import com.example.core.LatencyTestOutcome
 import com.example.core.autovpn.AutoFreeVpnManager
 import com.example.core.autovpn.AutoQualityGrade
@@ -9,13 +11,17 @@ import com.example.core.autovpn.AutoVpnDiscoveryEngine
 import com.example.core.autovpn.AutoVpnStage
 import com.example.core.autovpn.ConnectionOwnership
 import com.example.core.autovpn.VpnAppMode
+import com.example.data.local.MaxNetDatabase
 import com.example.domain.model.AppSettings
 import com.example.domain.model.LatencyMeasureType
 import com.example.domain.model.SecurityType
 import com.example.domain.model.ServerProfile
+import com.example.domain.model.SubscriptionFormat
 import com.example.domain.model.TransportType
 import com.example.domain.model.VpnConnectionState
 import com.example.domain.model.VpnProtocol
+import com.example.parser.ConfigParser
+import com.example.security.LogRedactor
 import com.example.vpn.VpnController
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -33,116 +39,238 @@ import org.robolectric.annotation.Config
 class AutoFreeVpnSystemTest {
 
     @Test
-    fun `official GitHub repository source feeds point exclusively to mohsenakbarinia maxnet5gvpn free-configs`() {
+    fun `dedicated Cloudflare Workers subscription endpoint is exclusive source and redacted in logs`() {
         val feeds = AutoVpnDiscoveryEngine.defaultSourceFeeds
         assertEquals(1, feeds.size)
         val officialFeed = feeds.first()
-        assertEquals(
-            "https://raw.githubusercontent.com/mohsenakbarinia/maxnet5gvpn/main/free-configs/configs.txt",
-            officialFeed.url
-        )
-        assertEquals(
-            "https://raw.githubusercontent.com/mohsenakbarinia/maxnet5gvpn/main/free-configs/manifest.json",
-            officialFeed.manifestUrl
-        )
+
+        // Must use HTTPS and dedicated Cloudflare Workers endpoint (never GitHub)
+        assertTrue(officialFeed.url.startsWith("https://"))
+        assertTrue(officialFeed.url.contains(".workers.dev/"))
+        assertTrue(officialFeed.url.endsWith("/sub/raw?app=xray"))
+        assertFalse(officialFeed.url.contains("github.com", ignoreCase = true))
+        assertFalse(officialFeed.url.contains("githubusercontent.com", ignoreCase = true))
+        assertNull(officialFeed.manifestUrl)
+
+        // Verify endpoint URL is treated as an access-bearing credential and redacted by LogRedactor
+        val rawLog = "Fetching Free VPN subscription from ${officialFeed.url} failed"
+        val redacted = LogRedactor.redact(rawLog)
+        assertFalse("Expected Workers subscription URL to be redacted from logs", redacted.contains("workers.dev"))
+        assertTrue(redacted.contains("[REDACTED-SUBSCRIPTION-URL]"))
     }
 
     @Test
-    fun `manifest verification validates SHA-256 content hash and rejects tampered configs or version rollback`() {
-        val configsContent = """
-            # MAXNET5G Free Configs
-            vless://b831381d-6324-4d53-ad4f-8cda48b30811@104.16.132.229:443?encryption=none&security=reality&sni=www.cloudflare.com&fp=chrome&pbk=m2c2t6P8vK9xL1nQ4rS7uW0yA3bC5dE8fG1hJ4kM7nP&sid=a1b2c3d4&type=tcp&flow=xtls-rprx-vision#Node-1
-            trojan://d053503f-8546-4f75-9f61-0efc60d52033@104.21.48.84:443?security=tls&sni=cdn.cloudflare.com&type=tcp#Node-2
-        """.trimIndent()
-        val exactSha256 = AutoVpnDiscoveryEngine.computeSha256Hex(configsContent)
+    fun `live Cloudflare Workers subscription endpoint reachability format inspection and real Xray engine session verification`() = runBlocking {
+        val endpointUrl = AutoVpnDiscoveryEngine.resolveFreeVpnSubscriptionEndpoint()
+        val responsePair = AutoVpnDiscoveryEngine.downloadPublicFeedResponse(endpointUrl)
+        assertNotNull("Expected live Cloudflare Workers endpoint to be reachable over HTTPS", responsePair)
 
-        val validManifestJson = """
-            {
-              "schema_version": 1,
-              "version": 5,
-              "updated_at": "2026-11-01T00:00:00Z",
-              "config_count": 2,
-              "sha256": "$exactSha256",
-              "repository": "https://github.com/mohsenakbarinia/maxnet5gvpn",
-              "configs_path": "free-configs/configs.txt"
-            }
-        """.trimIndent()
+        val (rawBody, contentType) = responsePair!!
+        assertTrue("Expected non-empty response body from Workers endpoint", rawBody.isNotBlank())
 
-        // 1. Valid manifest + matching configsText succeeds
-        val verified = AutoVpnDiscoveryEngine.parseAndVerifyManifest(
-            manifestJson = validManifestJson,
-            configsText = configsContent,
-            previousVersion = 4
+        val inspectionResult = AutoVpnDiscoveryEngine.inspectAndExtractSubscriptionPayload(
+            rawBody = rawBody,
+            contentTypeHeader = contentType
         )
-        assertTrue("Expected valid manifest + matching SHA-256 to pass", verified.isSuccess)
-        assertEquals(5, verified.getOrThrow().version)
-        assertEquals(2, verified.getOrThrow().configCount)
-
-        // 2. Tampered configsText fails SHA-256 verification
-        val tampered = AutoVpnDiscoveryEngine.parseAndVerifyManifest(
-            manifestJson = validManifestJson,
-            configsText = "$configsContent\ntrojan://tampered@1.2.3.4:443#Tampered",
-            previousVersion = 4
+        assertTrue(
+            "Expected subscription payload inspection to succeed: ${inspectionResult.exceptionOrNull()?.message}",
+            inspectionResult.isSuccess
         )
-        assertTrue("Expected tampered configsText to fail SHA-256 check", tampered.isFailure)
-
-        // 3. Rollback version (remote version 5 < cached version 6) is rejected
-        val rollback = AutoVpnDiscoveryEngine.parseAndVerifyManifest(
-            manifestJson = validManifestJson,
-            configsText = configsContent,
-            previousVersion = 6
+        val inspection = inspectionResult.getOrThrow()
+        assertTrue(
+            "Expected Base64 or PlainText or JSON format, got ${inspection.detectedFormat}",
+            inspection.detectedFormat in setOf(
+                SubscriptionFormat.BASE64_STANDARD,
+                SubscriptionFormat.BASE64_URL_SAFE,
+                SubscriptionFormat.PLAIN_TEXT,
+                SubscriptionFormat.JSON
+            )
         )
-        assertTrue("Expected older manifest version to be rejected", rollback.isFailure)
+        assertTrue("Expected valid configurations to be extracted (got ${inspection.profiles.size})", inspection.profiles.isNotEmpty())
+
+        val extractedProtocols = inspection.profiles.map { it.protocol }.toSet()
+        assertTrue(
+            "Expected extracted protocols to be supported Xray protocols (VLESS/VMess/Trojan)",
+            extractedProtocols.all { it in setOf(VpnProtocol.VLESS, VpnProtocol.VMESS, VpnProtocol.TROJAN) }
+        )
+
+        // Test an extracted configuration from the live endpoint through the real Xray engine & VpnController pipeline
+        val candidateToTest = inspection.profiles.first()
+        val validation = VpnController.validateConfiguration(candidateToTest, AppSettings(), emptyList())
+        assertTrue("Expected Xray configuration validation to pass for live candidate", validation.isValid)
+
+        val sessionRes = VpnController.startSession(
+            profile = candidateToTest,
+            settings = AppSettings(),
+            rules = emptyList(),
+            ownership = ConnectionOwnership.FREE,
+            establishTunAndForwarder = { true },
+            verifyConnectivity = false
+        )
+        assertTrue(
+            "Expected real Xray engine session start to succeed for extracted live candidate: ${sessionRes.exceptionOrNull()?.message}",
+            sessionRes.isSuccess
+        )
+        assertEquals(VpnConnectionState.CONNECTED, VpnController.connectionState.value)
+        assertEquals(ConnectionOwnership.FREE, VpnController.ownershipState.value)
+
+        VpnController.stopSession()
+        assertEquals(VpnConnectionState.DISCONNECTED, VpnController.connectionState.value)
     }
 
     @Test
-    fun `discovery engine parses validates normalizes and deduplicates VLESS Reality VMess and Trojan while rejecting untrusted inputs`() {
-        val vlessReality =
-            "vless://b831381d-6324-4d53-ad4f-8cda48b30811@104.16.132.229:443?encryption=none&security=reality&sni=www.cloudflare.com&fp=chrome&pbk=m2c2t6P8vK9xL1nQ4rS7uW0yA3bC5dE8fG1hJ4kM7nP&sid=a1b2c3d4&type=tcp&flow=xtls-rprx-vision#Node-A"
-        val vlessRealityDuplicate =
-            "vless://b831381d-6324-4d53-ad4f-8cda48b30811@104.16.132.229:443?encryption=none&security=reality&sni=www.cloudflare.com&fp=chrome&pbk=m2c2t6P8vK9xL1nQ4rS7uW0yA3bC5dE8fG1hJ4kM7nP&sid=a1b2c3d4&type=tcp&flow=xtls-rprx-vision#Duplicate-Label"
-        val vlessTls =
-            "vless://c942492e-7435-4e64-be50-9deb59c41922@172.67.74.226:443?encryption=none&security=tls&sni=speed.cloudflare.com&fp=chrome&type=ws&host=speed.cloudflare.com&path=%2Fws#Node-B"
-        val trojanTls =
-            "trojan://d053503f-8546-4f75-9f61-0efc60d52033@104.21.48.84:443?security=tls&sni=cdn.cloudflare.com&type=tcp#Node-C"
-        val vmessTls =
-            "vmess://eyJ2IjoiMiIsInBzIjoiTm9kZS1EIiwiYWRkIjoiMTA0LjE4LjMyLjQ3IiwicG9ydCI6IjQ0MyIsImlkIjoiZjI3NTcyNWItMDc2OC00Yjk3LThhODMtMmYxZTgyZjczMjU1IiwiYWlkIjoiMCIsInNjeSI6ImF1dG8iLCJuZXQiOiJ3cyIsInR5cGUiOiJub25lIiwiaG9zdCI6ImNkbi5jbG91ZGZsYXJlLmNvbSIsInBhdGgiOiIvdm1lc3Mtd3MiLCJ0bHMiOiJ0bHMiLCJzbmkiOiJjZG4uY2xvdWRmbGFyZS5jb20ifQ=="
+    fun `subscription response handler supports PlainText Base64 URL-safe Base64 and Xray JSON while rejecting HTML and empty responses`() {
+        val vlessLink =
+            "vless://b831381d-6324-4d53-ad4f-8cda48b30811@104.16.132.229:443?encryption=none&security=tls&sni=speed.cloudflare.com&fp=chrome&type=ws&host=speed.cloudflare.com&path=%2Fws-exact#ExactRemarks-Node1"
+        val trojanLink =
+            "trojan://d053503f-8546-4f75-9f61-0efc60d52033@104.21.48.84:443?security=tls&sni=cdn.cloudflare.com&type=tcp#ExactRemarks-Node2"
+        val vmessLink =
+            "vmess://eyJ2IjoiMiIsInBzIjoiRXhhY3RSZW1hcmtzLU5vZGUzIiwiYWRkIjoiMTA0LjE4LjMyLjQ3IiwicG9ydCI6IjQ0MyIsImlkIjoiZjI3NTcyNWItMDc2OC00Yjk3LThhODMtMmYxZTgyZjczMjU1IiwiYWlkIjoiMCIsInNjeSI6ImF1dG8iLCJuZXQiOiJ3cyIsInR5cGUiOiJub25lIiwiaG9zdCI6ImNkbi5jbG91ZGZsYXJlLmNvbSIsInBhdGgiOiIvdm1lc3Mtd3MiLCJ0bHMiOiJ0bHMiLCJzbmkiOiJjZG4uY2xvdWRmbGFyZS5jb20ifQ=="
 
-        // Unsafe / untrusted configs that MUST be rejected
-        val loopbackVless =
-            "vless://b831381d-6324-4d53-ad4f-8cda48b30811@127.0.0.1:443?security=tls&sni=example.com#Loopback"
-        val privateLanTrojan =
-            "trojan://secretpass@192.168.1.10:443?security=tls&sni=example.com#PrivateLan"
-        val scriptPayload =
-            "<script>eval('malicious')</script>\nvless://b831381d-6324-4d53-ad4f-8cda48b30811@104.16.132.229:443#Scripted"
+        val plainTextBody = "$vlessLink\n$trojanLink\n$vmessLink\n$vlessLink"
 
-        val backendJsonFeed = """
+        // 1. Plain-text subscription with duplicate removal & parameter preservation
+        val plainRes = AutoVpnDiscoveryEngine.inspectAndExtractSubscriptionPayload(
+            rawBody = plainTextBody,
+            contentTypeHeader = "text/plain; charset=utf-8"
+        ).getOrThrow()
+        assertEquals(SubscriptionFormat.PLAIN_TEXT, plainRes.detectedFormat)
+        assertEquals(3, plainRes.profiles.size)
+        assertEquals(1, plainRes.duplicatesRemoved)
+        val parsedVless = plainRes.profiles.first { it.protocol == VpnProtocol.VLESS }
+        assertEquals("ExactRemarks-Node1", parsedVless.remarks)
+        assertEquals("/ws-exact", parsedVless.path)
+        assertEquals("speed.cloudflare.com", parsedVless.sni)
+
+        // 2. Standard Base64 subscription
+        val base64Std = java.util.Base64.getEncoder().encodeToString(plainTextBody.toByteArray(Charsets.UTF_8))
+        val stdRes = AutoVpnDiscoveryEngine.inspectAndExtractSubscriptionPayload(
+            rawBody = base64Std,
+            contentTypeHeader = "text/plain"
+        ).getOrThrow()
+        assertEquals(SubscriptionFormat.BASE64_STANDARD, stdRes.detectedFormat)
+        assertEquals(3, stdRes.profiles.size)
+
+        // 3. URL-safe unpadded Base64 subscription
+        val base64UrlSafe = ConfigParser.encodeBase64NoPad(plainTextBody, urlSafe = true)
+        val urlSafeRes = AutoVpnDiscoveryEngine.inspectAndExtractSubscriptionPayload(
+            rawBody = base64UrlSafe,
+            contentTypeHeader = "application/octet-stream"
+        ).getOrThrow()
+        assertEquals(3, urlSafeRes.profiles.size)
+
+        // 4. Xray-compatible JSON subscription
+        val xrayJsonBody = """
             {
-              "schema_version": "1.0",
-              "candidates": [
-                {"protocol": "VLESS_REALITY", "uri": "$vlessReality"},
-                {"protocol": "VLESS_REALITY", "uri": "$vlessRealityDuplicate"},
-                {"protocol": "VLESS", "uri": "$vlessTls"},
-                {"protocol": "TROJAN", "uri": "$trojanTls"},
-                {"protocol": "VMESS", "uri": "$vmessTls"},
-                {"protocol": "VLESS", "uri": "$loopbackVless"},
-                {"protocol": "TROJAN", "uri": "$privateLanTrojan"}
+              "outbounds": [
+                {
+                  "tag": "proxy",
+                  "protocol": "vless",
+                  "settings": {
+                    "vnext": [
+                      {
+                        "address": "104.16.132.229",
+                        "port": 443,
+                        "users": [
+                          {
+                            "id": "b831381d-6324-4d53-ad4f-8cda48b30811",
+                            "encryption": "none"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "streamSettings": {
+                    "network": "ws",
+                    "security": "tls",
+                    "tlsSettings": {
+                      "serverName": "speed.cloudflare.com"
+                    },
+                    "wsSettings": {
+                      "path": "/json-ws"
+                    }
+                  }
+                }
               ]
             }
         """.trimIndent()
+        val jsonRes = AutoVpnDiscoveryEngine.inspectAndExtractSubscriptionPayload(
+            rawBody = xrayJsonBody,
+            contentTypeHeader = "application/json"
+        ).getOrThrow()
+        assertEquals(SubscriptionFormat.JSON, jsonRes.detectedFormat)
+        assertEquals(1, jsonRes.profiles.size)
+        assertEquals("/json-ws", jsonRes.profiles.first().path)
 
-        val validated = AutoVpnDiscoveryEngine.parseAndValidateUntrustedPayloads(
-            rawPayloads = listOf(backendJsonFeed, scriptPayload)
+        // 5. Reject empty response, HTML error page, and malformed payload
+        assertTrue(AutoVpnDiscoveryEngine.inspectAndExtractSubscriptionPayload("", "text/plain").isFailure)
+        assertTrue(
+            AutoVpnDiscoveryEngine.inspectAndExtractSubscriptionPayload(
+                "<!DOCTYPE html><html><body>502 Bad Gateway</body></html>",
+                "text/html"
+            ).isFailure
+        )
+        assertTrue(
+            AutoVpnDiscoveryEngine.inspectAndExtractSubscriptionPayload(
+                "not_a_valid_subscription_or_base64_payload_###",
+                "text/plain"
+            ).isFailure
+        )
+    }
+
+    @Test
+    fun `failed refresh never erases previous valid cache and supports offline operation`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val cacheStore = AutoVpnCacheStore(context)
+        cacheStore.clearAll()
+
+        val manager = AutoFreeVpnManager(
+            context = context,
+            cacheStore = cacheStore,
+            maxParallelTests = 4,
+            candidateTestTimeoutMs = 400,
+            baseFailoverBackoffMs = 0L
         )
 
-        // Exactly 4 unique valid public configs (VLESS Reality duplicate merged; loopback, LAN, and script payload rejected)
-        assertEquals(4, validated.size)
-        val protocols = validated.map { it.protocol }.toSet()
-        assertTrue(protocols.contains(VpnProtocol.VLESS))
-        assertTrue(protocols.contains(VpnProtocol.TROJAN))
-        assertTrue(protocols.contains(VpnProtocol.VMESS))
-        assertTrue(validated.any { it.security == SecurityType.REALITY && it.realityPublicKey.isNotBlank() })
-        assertFalse(validated.any { it.address == "127.0.0.1" || it.address.startsWith("192.168.") })
+        val validPayload = listOf(
+            "vless://b831381d-6324-4d53-ad4f-8cda48b30811@104.16.132.229:443?encryption=none&security=tls&sni=speed.cloudflare.com&type=ws&path=%2Fws1#Cached-Node-1",
+            "trojan://d053503f-8546-4f75-9f61-0efc60d52033@104.21.48.84:443?security=tls&sni=cdn.cloudflare.com&type=tcp#Cached-Node-2"
+        ).joinToString("\n")
+
+        // 1. Initial successful subscription download populates last-known-good cache
+        val initialRefresh = manager.refreshSubscriptionCatalog(
+            customFetcher = { validPayload }
+        )
+        assertTrue(initialRefresh.isSuccess)
+        assertEquals(2, cacheStore.getCachedValidatedCount())
+        assertFalse(manager.statusState.value.isUsingOfflineCache)
+
+        // 2. Subsequent failed refresh (network unreachable / HTML error page) MUST NOT erase the previous valid cache
+        val failedRefresh = manager.refreshSubscriptionCatalog(
+            customFetcher = { "<!DOCTYPE html><html><body>Error 522</body></html>" }
+        )
+        assertTrue(failedRefresh.isFailure)
+        assertEquals(
+            "Expected previous valid cache of 2 configurations to be preserved after failed refresh",
+            2,
+            cacheStore.getCachedValidatedCount()
+        )
+        assertTrue(manager.statusState.value.isUsingOfflineCache)
+
+        // 3. Offline connection works using the preserved cached configurations
+        val connectOffline = manager.connectOneTapAuto(
+            fetchRemoteIfNeeded = true,
+            forceRemoteRefresh = true,
+            customDiscoveryFetcher = { null }, // Simulate complete offline state
+            customLatencyProbe = { p ->
+                LatencyTestOutcome(p.id, 48L, LatencyMeasureType.TCP_HANDSHAKE)
+            },
+            onAttemptConnectAndVerify = { Result.success(48L) }
+        )
+        assertTrue("Expected offline connection using cached configurations to succeed", connectOffline.isSuccess)
+        assertTrue(
+            connectOffline.getOrThrow().profile.remarks in setOf("Cached-Node-1", "Cached-Node-2")
+        )
     }
 
     @Test
@@ -331,36 +459,51 @@ class AutoFreeVpnSystemTest {
     }
 
     @Test
-    fun `shared engine connection ownership enforces exclusivity between FREE and PERSONAL modes`() = runBlocking {
+    fun `shared engine connection ownership enforces exclusivity between FREE and PERSONAL modes and preserves My VPN data`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val db = MaxNetDatabase.getInstance(context)
+        val existingIds = db.maxNetDao().getAllProfilesSnapshot().map { it.id }
+        if (existingIds.isNotEmpty()) {
+            db.maxNetDao().deleteProfilesByIds(existingIds)
+        }
+
+        // Insert a Personal ("My VPN") profile into Room
+        val personalEntityId = db.maxNetDao().insertProfile(
+            com.example.data.local.ProfileEntity.fromDomain(
+                ServerProfile(
+                    remarks = "My-Private-Personal-Server",
+                    groupName = "MyPersonalGroup",
+                    protocol = VpnProtocol.TROJAN,
+                    address = "104.21.48.84",
+                    port = 443,
+                    credential = "d053503f-8546-4f75-9f61-0efc60d52033",
+                    network = TransportType.TCP,
+                    security = SecurityType.TLS,
+                    sni = "cdn.cloudflare.com"
+                )
+            )
+        )
+        val personalProfile = db.maxNetDao().getAllProfilesSnapshot().first().toDomain()
+        assertEquals(personalEntityId, personalProfile.id)
+
         VpnController.stopSession()
         VpnController.resetAutoFreeVpnManagerForTests()
         assertEquals(ConnectionOwnership.NONE, VpnController.ownershipState.value)
 
-        val freeProfile = ServerProfile(
-            id = -1001L,
-            remarks = "Free-Edge-Server",
-            protocol = VpnProtocol.VLESS,
-            address = "104.16.132.229",
-            port = 443,
-            credential = "b831381d-6324-4d53-ad4f-8cda48b30811",
-            network = TransportType.TCP,
-            security = SecurityType.REALITY,
-            sni = "www.cloudflare.com",
-            realityPublicKey = "m2c2t6P8vK9xL1nQ4rS7uW0yA3bC5dE8fG1hJ4kM7nP",
-            realityShortId = "a1b2c3d4"
+        // Refresh Free VPN subscription -> must NOT modify, overwrite, or delete Personal Room profiles
+        val manager = VpnController.getOrCreateAutoFreeVpnManager(context)
+        val refreshRes = manager.refreshSubscriptionCatalog(
+            customFetcher = {
+                "vless://b831381d-6324-4d53-ad4f-8cda48b30811@104.16.132.229:443?encryption=none&security=tls&sni=speed.cloudflare.com&type=ws&path=%2Fws#Free-Worker-Node"
+            }
         )
+        assertTrue(refreshRes.isSuccess)
 
-        val personalProfile = ServerProfile(
-            id = 42L,
-            remarks = "My-Private-Personal-Server",
-            protocol = VpnProtocol.TROJAN,
-            address = "104.21.48.84",
-            port = 443,
-            credential = "d053503f-8546-4f75-9f61-0efc60d52033",
-            network = TransportType.TCP,
-            security = SecurityType.TLS,
-            sni = "cdn.cloudflare.com"
-        )
+        val personalProfilesAfterFreeRefresh = db.maxNetDao().getAllProfilesSnapshot()
+        assertEquals("Personal Room DB must contain only the 1 personal profile", 1, personalProfilesAfterFreeRefresh.size)
+        assertEquals("My-Private-Personal-Server", personalProfilesAfterFreeRefresh.first().remarks)
+
+        val freeProfile = refreshRes.getOrThrow().first()
 
         // 1. Start Free VPN session -> ownership is FREE
         val freeRes = VpnController.startSession(

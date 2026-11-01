@@ -26,14 +26,14 @@ import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Coordinates the MAXNET5G Intelligent Auto Free VPN System:
- * 1. Automatic Configuration Discovery from the official MAXNET5G GitHub repository
- *    (`free-configs/manifest.json` + `free-configs/configs.txt`) with SHA-256 verification
- *    and isolated local cache fallback.
- * 2. Controlled Parallel Candidate Testing (Semaphore-bounded, non-sequential).
- * 3. Intelligent Multi-Factor Server Ranking (AutoServerRanker).
- * 4. One-Tap Connection & Tunnel Verification.
- * 5. Intelligent Failover with per-server cooldowns and exponential backoff.
- * 6. Continuous Health & Quality Optimization.
+ * 1. Automatic & Manual Subscription Download from the dedicated Cloudflare Workers endpoint
+ *    with multi-format detection (Plain-text, Base64, JSON) and non-destructive local caching.
+ * 2. Configurable Automatic Refresh Interval (default 30 minutes).
+ * 3. Controlled Parallel Candidate Testing (Semaphore-bounded, non-sequential).
+ * 4. Intelligent Multi-Factor Server Ranking (AutoServerRanker).
+ * 5. One-Tap Connection & Real Xray Engine Verification.
+ * 6. Intelligent Failover with retry limits, per-server cooldowns, exponential backoff, and
+ *    anti-flap protection against rapid server switching.
  */
 class AutoFreeVpnManager(
     private val context: Context? = null,
@@ -42,18 +42,26 @@ class AutoFreeVpnManager(
     private val candidateTestTimeoutMs: Int = 2200,
     private val maxCandidatesPerTestBatch: Int = 24,
     private val maxFailoverAttempts: Int = 5,
-    private val baseFailoverBackoffMs: Long = 350L
+    private val baseFailoverBackoffMs: Long = 350L,
+    @Volatile var autoRefreshIntervalMs: Long = DEFAULT_AUTO_REFRESH_INTERVAL_MS,
+    private val minServerSwitchIntervalMs: Long = DEFAULT_MIN_SWITCH_INTERVAL_MS
 ) {
 
     private val managerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var continuousOptimizationJob: Job? = null
+
+    @Volatile
+    private var lastServerSwitchTimestampMs: Long = 0L
 
     private val _statusState = MutableStateFlow(
         AutoVpnStatusSnapshot(
             cachedValidatedCount = cacheStore.getCachedValidatedCount(),
             manifestVersion = cacheStore.getLastManifest()?.version ?: 1,
             manifestUpdatedAt = cacheStore.getLastManifest()?.updatedAt ?: "",
-            manifestSha256 = cacheStore.getLastManifest()?.sha256 ?: ""
+            manifestSha256 = cacheStore.getLastManifest()?.sha256 ?: "",
+            detectedSubscriptionFormat = cacheStore.getLastManifest()?.detectedFormat ?: "",
+            lastRefreshTimestampMs = cacheStore.getLastRefreshTimestampMs(),
+            autoRefreshIntervalMs = autoRefreshIntervalMs
         )
     )
     val statusState: StateFlow<AutoVpnStatusSnapshot> = _statusState.asStateFlow()
@@ -62,6 +70,126 @@ class AutoFreeVpnManager(
 
     fun getLastRankedCandidates(): List<RankedVpnCandidate> = lastRankedCandidates
 
+    fun setAutoRefreshInterval(intervalMs: Long) {
+        val clamped = intervalMs.coerceIn(MIN_AUTO_REFRESH_INTERVAL_MS, MAX_AUTO_REFRESH_INTERVAL_MS)
+        autoRefreshIntervalMs = clamped
+        _statusState.value = _statusState.value.copy(
+            autoRefreshIntervalMs = clamped,
+            lastUpdatedMs = System.currentTimeMillis()
+        )
+    }
+
+    fun isSubscriptionRefreshDue(nowMs: Long = System.currentTimeMillis()): Boolean {
+        val lastRefresh = cacheStore.getLastRefreshTimestampMs()
+        if (lastRefresh <= 0L || cacheStore.getCachedValidatedCount() == 0) return true
+        return (nowMs - lastRefresh) >= autoRefreshIntervalMs
+    }
+
+    /**
+     * Manually or automatically refreshes the Free VPN subscription from the dedicated
+     * Cloudflare Workers endpoint.
+     *
+     * Never erases the previous valid cache if the refresh fails.
+     */
+    suspend fun refreshSubscriptionCatalog(
+        customFetcher: (suspend (String) -> String?)? = null,
+        onLog: (String, String, String) -> Unit = { _, _, _ -> }
+    ): Result<List<ServerProfile>> {
+        val previousCached = cacheStore.getCachedValidatedProfiles()
+        val refreshStartMs = System.currentTimeMillis()
+        _statusState.value = _statusState.value.copy(
+            isRefreshingSubscription = true,
+            detailMessageEn = "Refreshing Free VPN subscription configurations...",
+            detailMessageFa = "در حال بروزرسانی کانفیگ‌های اشتراک وی‌پی‌ان رایگان...",
+            lastUpdatedMs = refreshStartMs
+        )
+
+        return try {
+            AutoVpnDiscoveryEngine.discoverValidatedConfigurations(
+                context = context,
+                existingProfiles = emptyList(),
+                fetchRemoteSources = true,
+                cacheStore = cacheStore,
+                customFetcher = customFetcher
+            )
+            val updatedManifest = cacheStore.getLastManifest()
+            val remoteSucceeded = updatedManifest != null && updatedManifest.fetchedAtMs >= refreshStartMs
+            val currentCached = cacheStore.getCachedValidatedProfiles()
+
+            if (remoteSucceeded && currentCached.isNotEmpty()) {
+                _statusState.value = _statusState.value.copy(
+                    isRefreshingSubscription = false,
+                    discoveredCount = currentCached.size,
+                    cachedValidatedCount = cacheStore.getCachedValidatedCount(),
+                    manifestVersion = updatedManifest?.version ?: 1,
+                    manifestUpdatedAt = updatedManifest?.updatedAt ?: "",
+                    manifestSha256 = updatedManifest?.sha256 ?: "",
+                    detectedSubscriptionFormat = updatedManifest?.detectedFormat ?: "",
+                    lastRefreshTimestampMs = cacheStore.getLastRefreshTimestampMs(),
+                    isUsingOfflineCache = false,
+                    lastSyncStatusEn = "Synced Free VPN Subscription (${currentCached.size} servers)",
+                    lastSyncStatusFa = "اشتراک وی‌پی‌ان رایگان بروزرسانی شد (${currentCached.size} سرور)",
+                    detailMessageEn = "Loaded ${currentCached.size} validated Free VPN configurations.",
+                    detailMessageFa = "${currentCached.size} کانفیگ معتبر رایگان دریافت و ذخیره شد.",
+                    lastUpdatedMs = System.currentTimeMillis()
+                )
+                onLog(
+                    "INFO",
+                    "AutoFreeVPN",
+                    "Refreshed Free VPN subscription: ${currentCached.size} valid configs (Format: ${updatedManifest?.detectedFormat ?: "AUTO"})"
+                )
+                Result.success(currentCached)
+            } else {
+                // Remote refresh failed — preserve previous valid cache!
+                val preservedCount = previousCached.size
+                _statusState.value = _statusState.value.copy(
+                    isRefreshingSubscription = false,
+                    cachedValidatedCount = preservedCount,
+                    isUsingOfflineCache = preservedCount > 0,
+                    lastSyncStatusEn = if (preservedCount > 0) {
+                        "Offline Cache Active ($preservedCount saved servers)"
+                    } else {
+                        "Subscription Refresh Failed"
+                    },
+                    lastSyncStatusFa = if (preservedCount > 0) {
+                        "کش آفلاین فعال ($preservedCount سرور ذخیره‌شده)"
+                    } else {
+                        "خطا در بروزرسانی اشتراک رایگان"
+                    },
+                    detailMessageEn = if (preservedCount > 0) {
+                        "Refresh failed; preserved $preservedCount valid cached configurations."
+                    } else {
+                        "Could not reach Free VPN subscription endpoint."
+                    },
+                    detailMessageFa = if (preservedCount > 0) {
+                        "بروزرسانی ناموفق بود؛ $preservedCount کانفیگ معتبر قبلی حفظ شد."
+                    } else {
+                        "امکان دریافت اشتراک وی‌پی‌ان رایگان وجود ندارد."
+                    },
+                    lastUpdatedMs = System.currentTimeMillis()
+                )
+                onLog(
+                    "WARN",
+                    "AutoFreeVPN",
+                    "Free VPN subscription refresh failed; preserved $preservedCount cached configurations"
+                )
+                Result.failure(IllegalStateException("Subscription refresh failed; preserved $preservedCount cached configurations"))
+            }
+        } catch (ce: CancellationException) {
+            _statusState.value = _statusState.value.copy(isRefreshingSubscription = false)
+            throw ce
+        } catch (t: Throwable) {
+            val preservedCount = cacheStore.getCachedValidatedCount()
+            _statusState.value = _statusState.value.copy(
+                isRefreshingSubscription = false,
+                cachedValidatedCount = preservedCount,
+                isUsingOfflineCache = preservedCount > 0,
+                lastUpdatedMs = System.currentTimeMillis()
+            )
+            Result.failure(t)
+        }
+    }
+
     /**
      * Executes the complete One-Tap Auto Free VPN pipeline:
      * Discover -> Parallel Test -> Rank -> Select Best -> Connect & Verify -> Automatic Failover.
@@ -69,6 +197,7 @@ class AutoFreeVpnManager(
     suspend fun connectOneTapAuto(
         existingProfiles: List<ServerProfile> = emptyList(),
         fetchRemoteIfNeeded: Boolean = true,
+        forceRemoteRefresh: Boolean = false,
         customDiscoveryFetcher: (suspend (String) -> String?)? = null,
         customLatencyProbe: (suspend (ServerProfile) -> LatencyTestOutcome)? = null,
         onPersistAndSelectCandidate: suspend (ServerProfile, Long?) -> ServerProfile = { p, lat ->
@@ -79,19 +208,26 @@ class AutoFreeVpnManager(
         onLog: (String, String, String) -> Unit = { _, _, _ -> }
     ): Result<RankedVpnCandidate> {
         try {
-            // Stage 1: Automatic Configuration Discovery from official MAXNET5G GitHub repository
+            val startMs = System.currentTimeMillis()
+            // Stage 1: Automatic Configuration Discovery from dedicated Cloudflare Workers endpoint
             _statusState.value = _statusState.value.copy(
                 stage = AutoVpnStage.DISCOVERING_CONFIGS,
-                detailMessageEn = "Syncing verified free configurations from official GitHub repository...",
-                detailMessageFa = "در حال دریافت کانفیگ‌های رایگان تاییدشده از مخزن رسمی گیت‌هاب...",
+                detailMessageEn = "Syncing Free VPN subscription configurations...",
+                detailMessageFa = "در حال دریافت کانفیگ‌های اشتراک وی‌پی‌ان رایگان...",
                 failoverAttempt = 0,
-                lastUpdatedMs = System.currentTimeMillis()
+                lastUpdatedMs = startMs
             )
 
-            val cachedProfiles = cacheStore.getCachedValidatedProfiles()
-            val combinedExisting = (existingProfiles + cachedProfiles).distinctBy { it.uniqueFingerprintKey() }
+            val cachedProfilesBefore = cacheStore.getCachedValidatedProfiles()
+            val combinedExisting = (existingProfiles + cachedProfilesBefore).distinctBy { it.uniqueFingerprintKey() }
 
-            val shouldFetchRemote = fetchRemoteIfNeeded && combinedExisting.size < 8
+            val shouldFetchRemote = fetchRemoteIfNeeded && (
+                forceRemoteRefresh ||
+                    customDiscoveryFetcher != null ||
+                    combinedExisting.size < 8 ||
+                    isSubscriptionRefreshDue(startMs)
+                )
+
             val discovered = AutoVpnDiscoveryEngine.discoverValidatedConfigurations(
                 context = context,
                 existingProfiles = combinedExisting,
@@ -100,14 +236,23 @@ class AutoFreeVpnManager(
                 customFetcher = customDiscoveryFetcher
             )
 
-            val candidatePool = (combinedExisting + discovered)
-                .distinctBy { it.uniqueFingerprintKey() }
-                .mapIndexed { idx, profile ->
-                    if (profile.id == 0L) profile.copy(id = -(idx + 1000L)) else profile
-                }
-
+            val latestCachedProfiles = cacheStore.getCachedValidatedProfiles()
             val latestManifest = cacheStore.getLastManifest()
-            val usingOfflineCache = !shouldFetchRemote || latestManifest == null
+            val remoteFetchedFresh = shouldFetchRemote &&
+                latestManifest != null &&
+                latestManifest.fetchedAtMs >= startMs
+
+            val rawPool = if (remoteFetchedFresh && latestCachedProfiles.isNotEmpty()) {
+                (latestCachedProfiles + existingProfiles).distinctBy { it.uniqueFingerprintKey() }
+            } else {
+                (combinedExisting + discovered).distinctBy { it.uniqueFingerprintKey() }
+            }
+
+            val candidatePool = rawPool.mapIndexed { idx, profile ->
+                if (profile.id == 0L) profile.copy(id = -(idx + 1000L)) else profile
+            }
+
+            val usingOfflineCache = !remoteFetchedFresh && cachedProfilesBefore.isNotEmpty()
 
             if (candidatePool.isEmpty()) {
                 _statusState.value = _statusState.value.copy(
@@ -122,7 +267,7 @@ class AutoFreeVpnManager(
             onLog(
                 "INFO",
                 "AutoFreeVPN",
-                "Discovered ${candidatePool.size} unique validated candidates (Cached: ${cachedProfiles.size}, Manifest v${latestManifest?.version ?: 1})"
+                "Discovered ${candidatePool.size} unique validated candidates (Cached: ${cacheStore.getCachedValidatedCount()}, OfflineCache: $usingOfflineCache)"
             )
 
             // Pre-rank candidates using cached metrics & network compatibility to test the most promising batch first
@@ -142,16 +287,18 @@ class AutoFreeVpnManager(
                 manifestVersion = latestManifest?.version ?: 1,
                 manifestUpdatedAt = latestManifest?.updatedAt ?: "",
                 manifestSha256 = latestManifest?.sha256 ?: "",
+                detectedSubscriptionFormat = latestManifest?.detectedFormat ?: "",
+                lastRefreshTimestampMs = cacheStore.getLastRefreshTimestampMs(),
                 isUsingOfflineCache = usingOfflineCache,
-                lastSyncStatusEn = if (latestManifest != null) {
-                    "Synced GitHub Manifest v${latestManifest.version} (${candidatePool.size} servers)"
-                } else {
-                    "Ready • ${candidatePool.size} Validated Free Configurations"
+                lastSyncStatusEn = when {
+                    usingOfflineCache -> "Offline Cache Active (${candidatePool.size} saved servers)"
+                    latestManifest != null -> "Synced Subscription (${candidatePool.size} servers)"
+                    else -> "Ready • ${candidatePool.size} Validated Free Configurations"
                 },
-                lastSyncStatusFa = if (latestManifest != null) {
-                    "همگام با گیت‌هاب نسخه ${latestManifest.version} (${candidatePool.size} سرور)"
-                } else {
-                    "آماده • ${candidatePool.size} کانفیگ رایگان تاییدشده"
+                lastSyncStatusFa = when {
+                    usingOfflineCache -> "کش آفلاین فعال (${candidatePool.size} سرور ذخیره‌شده)"
+                    latestManifest != null -> "همگام با اشتراک رایگان (${candidatePool.size} سرور)"
+                    else -> "آماده • ${candidatePool.size} کانفیگ رایگان تاییدشده"
                 },
                 detailMessageEn = "Testing ${batchToTest.size} candidates in parallel...",
                 detailMessageFa = "در حال تست موازی ${batchToTest.size} سرور کاندید...",
@@ -269,6 +416,8 @@ class AutoFreeVpnManager(
                         metrics = updatedMetrics
                     )
 
+                    lastServerSwitchTimestampMs = System.currentTimeMillis()
+
                     _statusState.value = _statusState.value.copy(
                         stage = AutoVpnStage.CONNECTED,
                         activeCandidate = connectedCandidate,
@@ -336,9 +485,9 @@ class AutoFreeVpnManager(
     }
 
     /**
-     * Starts continuous background health & quality optimization while VPN is connected.
-     * Periodically checks active tunnel health and switches only if the active connection
-     * fails or a substantially better candidate is found while traffic is idle.
+     * Starts continuous background health, quality optimization, and periodic subscription
+     * refresh while VPN is connected.
+     * Enforces anti-flap protection ([minServerSwitchIntervalMs]) against rapid server switching.
      */
     fun startContinuousOptimization(
         getConnectionState: () -> VpnConnectionState,
@@ -353,8 +502,14 @@ class AutoFreeVpnManager(
                 delay(intervalMs)
                 if (getConnectionState() != VpnConnectionState.CONNECTED) continue
 
+                // Periodic background subscription refresh if interval has elapsed
+                if (isSubscriptionRefreshDue()) {
+                    runCatching { refreshSubscriptionCatalog() }
+                }
+
                 val health = runCatching { onHealthCheckActiveTunnel() }.getOrElse { Result.failure(it) }
                 val activeCandidate = _statusState.value.activeCandidate
+                val nowMs = System.currentTimeMillis()
 
                 if (health.isFailure) {
                     // Active server degraded/dropped -> trigger intelligent failover
@@ -365,11 +520,12 @@ class AutoFreeVpnManager(
                         )
                         cacheStore.updateMetrics(activeCandidate.profile, failedMetrics)
                     }
+                    lastServerSwitchTimestampMs = nowMs
                     _statusState.value = _statusState.value.copy(
                         stage = AutoVpnStage.FAILOVER_SWITCHING,
                         detailMessageEn = "Connection degraded • Automatically switching to next best server...",
                         detailMessageFa = "افت کیفیت سرور فعلی • در حال تعویض خودکار به سرور بهتر...",
-                        lastUpdatedMs = System.currentTimeMillis()
+                        lastUpdatedMs = nowMs
                     )
                     onTriggerFailoverReconnect()
                 } else {
@@ -391,25 +547,28 @@ class AutoFreeVpnManager(
                         _statusState.value = _statusState.value.copy(
                             stage = AutoVpnStage.CONNECTED,
                             activeCandidate = refreshedCurrent,
-                            lastUpdatedMs = System.currentTimeMillis()
+                            lastUpdatedMs = nowMs
                         )
 
-                        // Check if any cached standby candidate is substantially better (with strict hysteresis)
+                        // Protect against rapid server switching using both time cooldown and score hysteresis
+                        val switchCooldownElapsed = (nowMs - lastServerSwitchTimestampMs) >= minServerSwitchIntervalMs
                         val bestChallenger = lastRankedCandidates.firstOrNull {
                             it.profile.uniqueFingerprintKey() != refreshedCurrent.profile.uniqueFingerprintKey()
                         }
-                        if (bestChallenger != null &&
+                        if (switchCooldownElapsed &&
+                            bestChallenger != null &&
                             AutoServerRanker.shouldSwitchToBetterCandidate(
                                 current = refreshedCurrent,
                                 challenger = bestChallenger,
                                 currentTrafficSpeedBps = getActiveTrafficBps()
                             )
                         ) {
+                            lastServerSwitchTimestampMs = nowMs
                             _statusState.value = _statusState.value.copy(
                                 stage = AutoVpnStage.OPTIMIZING,
                                 detailMessageEn = "Switching to a substantially faster server...",
                                 detailMessageFa = "ارتقای خودکار اتصال به سرور سریع‌تر...",
-                                lastUpdatedMs = System.currentTimeMillis()
+                                lastUpdatedMs = nowMs
                             )
                             onTriggerFailoverReconnect()
                         }
@@ -427,8 +586,8 @@ class AutoFreeVpnManager(
             isContinuousOptimizationActive = false,
             failoverAttempt = 0,
             cachedValidatedCount = cacheStore.getCachedValidatedCount(),
-            detailMessageEn = "One tap automatically discovers, tests, ranks, and connects.",
-            detailMessageFa = "با یک لمس، بهترین سرور رایگان به صورت خودکار کشف، تست و متصل می‌شود.",
+            detailMessageEn = "One tap automatically downloads, tests, ranks, and connects.",
+            detailMessageFa = "با یک لمس، بهترین سرور رایگان به صورت خودکار دریافت، تست و متصل می‌شود.",
             lastUpdatedMs = System.currentTimeMillis()
         )
     }
@@ -437,7 +596,8 @@ class AutoFreeVpnManager(
         stopContinuousOptimizationAndResetToIdle()
         cacheStore.clearAll()
         lastRankedCandidates = emptyList()
-        _statusState.value = AutoVpnStatusSnapshot()
+        lastServerSwitchTimestampMs = 0L
+        _statusState.value = AutoVpnStatusSnapshot(autoRefreshIntervalMs = autoRefreshIntervalMs)
     }
 
     fun syncWithActiveProfile(
@@ -483,5 +643,12 @@ class AutoFreeVpnManager(
             isContinuousOptimizationActive = connectionState == VpnConnectionState.CONNECTED,
             lastUpdatedMs = System.currentTimeMillis()
         )
+    }
+
+    companion object {
+        const val DEFAULT_AUTO_REFRESH_INTERVAL_MS = 30 * 60 * 1000L // 30 minutes
+        const val MIN_AUTO_REFRESH_INTERVAL_MS = 5 * 60 * 1000L // 5 minutes
+        const val MAX_AUTO_REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000L // 24 hours
+        const val DEFAULT_MIN_SWITCH_INTERVAL_MS = 20_000L // 20 seconds anti-flap guard
     }
 }

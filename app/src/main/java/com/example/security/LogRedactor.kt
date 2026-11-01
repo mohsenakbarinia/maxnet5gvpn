@@ -21,12 +21,17 @@ object LogRedactor {
         option = RegexOption.IGNORE_CASE
     )
     private val subscriptionPathUrlRegex = Regex(
-        pattern = "https?://[^/\\s\"']+(:\\d+)?/(sub|api|link|v1|v2|s)/[^\\s\"']+",
+        pattern = "https?://[^/\\s\"']+(:\\d+)?/(?:[A-Za-z0-9_\\-]+/)?(sub|api|link|v1|v2|s)(?:/[^\\s\"']*)?",
+        option = RegexOption.IGNORE_CASE
+    )
+    private val workersDevUrlRegex = Regex(
+        pattern = "https?://[^\\s\"']*workers\\.dev[^\\s\"']*",
         option = RegexOption.IGNORE_CASE
     )
 
     fun redact(raw: String, knownSecrets: Collection<String> = emptyList()): String {
         var sanitized = raw
+        sanitized = workersDevUrlRegex.replace(sanitized, "[REDACTED-SUBSCRIPTION-URL]")
         sanitized = uuidRegex.replace(sanitized, "[REDACTED-UUID]")
         sanitized = uriCredentialRegex.replace(sanitized) { match ->
             "${match.groupValues[1]}://[REDACTED-CREDENTIAL]@"

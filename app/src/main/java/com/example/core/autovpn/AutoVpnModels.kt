@@ -5,7 +5,7 @@ import com.example.domain.model.VpnProtocol
 
 /**
  * Top-level operating mode of MAXNET5G VPN.
- * - [FREE_VPN]: Uses exclusively repository-managed free configurations (`free-configs/configs.txt` & `manifest.json`).
+ * - [FREE_VPN]: Uses exclusively the dedicated Cloudflare Workers Free VPN subscription endpoint.
  * - [MY_VPN]: Uses exclusively the user's personal configurations and subscriptions stored in Room.
  */
 enum class VpnAppMode(
@@ -17,8 +17,8 @@ enum class VpnAppMode(
     FREE_VPN(
         titleEn = "FREE VPN",
         titleFa = "وی‌پی‌ان رایگان",
-        subtitleEn = "Automatic GitHub Free Configs • One-Tap Smart Connect",
-        subtitleFa = "دریافت خودکار از گیت‌هاب • اتصال هوشمند با یک لمس"
+        subtitleEn = "Cloudflare Workers Subscription • One-Tap Smart Connect",
+        subtitleFa = "اشتراک اختصاصی ابری • اتصال هوشمند با یک لمس"
     ),
     MY_VPN(
         titleEn = "MY VPN",
@@ -41,8 +41,7 @@ enum class ConnectionOwnership(
 }
 
 /**
- * Cryptographically hashed metadata manifest (`free-configs/manifest.json`) from the
- * official MAXNET5G GitHub repository (`https://github.com/mohsenakbarinia/maxnet5gvpn`).
+ * Metadata for the cached Free VPN subscription catalog.
  */
 data class FreeConfigManifest(
     val schemaVersion: Int = 1,
@@ -50,9 +49,11 @@ data class FreeConfigManifest(
     val updatedAt: String = "",
     val configCount: Int = 0,
     val sha256: String = "",
-    val repository: String = "https://github.com/mohsenakbarinia/maxnet5gvpn",
-    val configsPath: String = "free-configs/configs.txt",
-    val signature: String = ""
+    val repository: String = "Cloudflare Workers Subscription",
+    val configsPath: String = "sub/raw?app=xray",
+    val signature: String = "",
+    val detectedFormat: String = "BASE64_STANDARD",
+    val fetchedAtMs: Long = 0L
 )
 
 /**
@@ -67,8 +68,8 @@ enum class AutoVpnStage(
         titleFa = "آماده اتصال هوشمند خودکار"
     ),
     DISCOVERING_CONFIGS(
-        titleEn = "Syncing Free Configurations from GitHub...",
-        titleFa = "در حال دریافت کانفیگ‌های رایگان از گیت‌هاب..."
+        titleEn = "Syncing Free VPN Subscription...",
+        titleFa = "در حال دریافت اشتراک وی‌پی‌ان رایگان..."
     ),
     TESTING_CANDIDATES(
         titleEn = "Testing Candidate Servers in Parallel...",
@@ -119,7 +120,8 @@ enum class AutoQualityGrade(
 }
 
 /**
- * Configurable public configuration source (official MAXNET5G GitHub repository feed).
+ * Configurable Free VPN subscription source descriptor.
+ * Note: [url] is treated as an access-bearing credential and must never be logged or displayed in UI.
  */
 data class AutoVpnSourceFeed(
     val id: String,
@@ -174,8 +176,8 @@ data class RankedVpnCandidate(
  */
 data class AutoVpnStatusSnapshot(
     val stage: AutoVpnStage = AutoVpnStage.IDLE,
-    val detailMessageEn: String = "One tap automatically discovers, tests, ranks, and connects.",
-    val detailMessageFa: String = "با یک لمس، بهترین سرور رایگان به صورت خودکار کشف، تست و متصل می‌شود.",
+    val detailMessageEn: String = "One tap automatically downloads, tests, ranks, and connects.",
+    val detailMessageFa: String = "با یک لمس، بهترین سرور رایگان به صورت خودکار دریافت، تست و متصل می‌شود.",
     val discoveredCount: Int = 0,
     val testedCount: Int = 0,
     val totalToTestCount: Int = 0,
@@ -185,11 +187,15 @@ data class AutoVpnStatusSnapshot(
     val failoverAttempt: Int = 0,
     val maxFailoverAttempts: Int = 5,
     val isContinuousOptimizationActive: Boolean = false,
+    val isRefreshingSubscription: Boolean = false,
     val manifestVersion: Int = 1,
     val manifestUpdatedAt: String = "",
     val manifestSha256: String = "",
+    val detectedSubscriptionFormat: String = "",
+    val lastRefreshTimestampMs: Long = 0L,
+    val autoRefreshIntervalMs: Long = 30 * 60 * 1000L,
     val isUsingOfflineCache: Boolean = false,
-    val lastSyncStatusEn: String = "Official GitHub Repository • Verified SHA-256",
-    val lastSyncStatusFa: String = "مخزن رسمی گیت‌هاب • تاییدشده با SHA-256",
+    val lastSyncStatusEn: String = "Dedicated Free VPN Subscription • Ready",
+    val lastSyncStatusFa: String = "اشتراک اختصاصی وی‌پی‌ان رایگان • آماده",
     val lastUpdatedMs: Long = 0L
 )

@@ -772,6 +772,38 @@ class MaxNetViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun refreshFreeVpnConfigurations() {
+        viewModelScope.launch {
+            val isFa = settingsState.value.languageCode.startsWith("fa", ignoreCase = true)
+            val result = autoFreeVpnManager.refreshSubscriptionCatalog(
+                onLog = { level, tag, msg ->
+                    repository.appendLog(level, tag, msg)
+                }
+            )
+            result.fold(
+                onSuccess = { list ->
+                    showMessage(
+                        if (isFa) {
+                            "${list.size} کانفیگ رایگان معتبر بروزرسانی شد"
+                        } else {
+                            "Refreshed ${list.size} validated Free VPN configurations"
+                        }
+                    )
+                },
+                onFailure = {
+                    val preserved = autoFreeVpnManager.cacheStore.getCachedValidatedCount()
+                    showMessage(
+                        if (isFa) {
+                            "بروزرسانی ناموفق بود ($preserved کانفیگ قبلی در کش حفظ شد)"
+                        } else {
+                            "Refresh failed ($preserved cached configurations preserved)"
+                        }
+                    )
+                }
+            )
+        }
+    }
+
     fun testAllProfilesLatency(autoSelectBest: Boolean = false) {
         if (autoSelectBest && selectedVpnModeState.value == VpnAppMode.FREE_VPN) {
             // In FREE VPN mode, re-run isolated Free VPN discovery/testing without touching Personal Room profiles

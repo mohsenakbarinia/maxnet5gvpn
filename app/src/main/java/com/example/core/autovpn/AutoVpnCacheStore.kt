@@ -10,9 +10,10 @@ import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Isolated persistent & in-memory local cache of verified Free VPN configurations,
- * manifest metadata, and per-server quality metrics.
+ * subscription sync metadata, and per-server quality metrics.
  *
- * Strictly isolated from the Personal VPN Room database (`MaxNetDao`).
+ * - Strictly isolated from the Personal VPN Room database (`MaxNetDao`).
+ * - Performs atomic updates: a failed or empty refresh never erases the previous valid cache.
  */
 class AutoVpnCacheStore(context: Context? = null) {
 
@@ -32,26 +33,49 @@ class AutoVpnCacheStore(context: Context? = null) {
 
     fun getLastManifest(): FreeConfigManifest? = lastManifest
 
+    fun getLastRefreshTimestampMs(): Long = lastManifest?.fetchedAtMs ?: 0L
+
     fun getMetricsMap(): Map<String, CandidateQualityMetrics> = metricsCache.toMap()
 
     fun getMetrics(fingerprintKey: String): CandidateQualityMetrics? = metricsCache[fingerprintKey]
 
+    /**
+     * Atomically updates the last-known-good Free VPN configuration cache.
+     * If [profiles] is empty, the previous valid cache is preserved untouched.
+     */
+    @Synchronized
     fun saveVerifiedRemoteCatalog(
         manifest: FreeConfigManifest,
         profiles: List<ServerProfile>
     ) {
-        lastManifest = manifest
-        for (profile in profiles) {
+        if (profiles.isEmpty()) {
+            // Never erase the previous valid cache when a refresh yields 0 valid configurations
+            return
+        }
+        val newLinks = LinkedHashMap<String, String>()
+        for (profile in profiles.take(MAX_CACHED_CANDIDATES)) {
             val key = profile.uniqueFingerprintKey()
             val uri = ConfigParser.toShareUri(profile)
             if (uri.isNotBlank()) {
-                validatedShareLinksCache[key] = uri
+                newLinks[key] = uri
             }
         }
+        if (newLinks.isEmpty()) {
+            return
+        }
+
+        // Atomic swap of validated share links while retaining any existing valid metrics
+        validatedShareLinksCache.clear()
+        validatedShareLinksCache.putAll(newLinks)
+        lastManifest = manifest.copy(
+            configCount = newLinks.size,
+            fetchedAtMs = if (manifest.fetchedAtMs > 0L) manifest.fetchedAtMs else System.currentTimeMillis()
+        )
         memoizedProfiles = null
         persistToPrefs()
     }
 
+    @Synchronized
     fun updateMetrics(profile: ServerProfile, metrics: CandidateQualityMetrics) {
         val key = profile.uniqueFingerprintKey()
         metricsCache[key] = metrics
@@ -85,6 +109,7 @@ class AutoVpnCacheStore(context: Context? = null) {
 
     fun getCachedValidatedCount(): Int = validatedShareLinksCache.size
 
+    @Synchronized
     fun clearAll() {
         metricsCache.clear()
         validatedShareLinksCache.clear()
@@ -93,6 +118,7 @@ class AutoVpnCacheStore(context: Context? = null) {
         prefs?.edit()?.clear()?.apply()
     }
 
+    @Synchronized
     fun clearCooldowns() {
         for ((key, value) in metricsCache.entries) {
             if (value.cooldownUntilMs > 0L || value.consecutiveFailures > 0) {
@@ -114,10 +140,25 @@ class AutoVpnCacheStore(context: Context? = null) {
                     updatedAt = mObj.optString("updated_at", ""),
                     configCount = mObj.optInt("config_count", 0),
                     sha256 = mObj.optString("sha256", ""),
-                    repository = mObj.optString("repository", AutoVpnDiscoveryEngine.OFFICIAL_GITHUB_REPO),
-                    configsPath = mObj.optString("configs_path", "free-configs/configs.txt"),
-                    signature = mObj.optString("signature", "")
+                    repository = mObj.optString("repository", "Cloudflare Workers Subscription"),
+                    configsPath = mObj.optString("configs_path", "sub/raw?app=xray"),
+                    signature = mObj.optString("signature", ""),
+                    detectedFormat = mObj.optString("detected_format", "BASE64_STANDARD"),
+                    fetchedAtMs = mObj.optLong("fetched_at_ms", 0L)
                 )
+            }
+        }
+        runCatching {
+            sp.getString(KEY_CATALOG_URIS_JSON, null)?.let { catalogRaw ->
+                val arr = JSONArray(catalogRaw)
+                for (i in 0 until arr.length()) {
+                    val obj = arr.optJSONObject(i) ?: continue
+                    val key = obj.optString("key")
+                    val uri = obj.optString("uri")
+                    if (key.isNotBlank() && uri.isNotBlank()) {
+                        validatedShareLinksCache[key] = uri
+                    }
+                }
             }
         }
         runCatching {
@@ -172,9 +213,22 @@ class AutoVpnCacheStore(context: Context? = null) {
                     put("repository", m.repository)
                     put("configs_path", m.configsPath)
                     put("signature", m.signature)
+                    put("detected_format", m.detectedFormat)
+                    put("fetched_at_ms", m.fetchedAtMs)
                 }
                 editor.putString(KEY_MANIFEST_JSON, mObj.toString())
             }
+            val catalogArr = JSONArray()
+            for ((key, uri) in validatedShareLinksCache.entries.take(MAX_CACHED_CANDIDATES)) {
+                catalogArr.put(
+                    JSONObject().apply {
+                        put("key", key)
+                        put("uri", uri)
+                    }
+                )
+            }
+            editor.putString(KEY_CATALOG_URIS_JSON, catalogArr.toString())
+
             val entries = metricsCache.values
                 .sortedByDescending { it.lastValidatedAtMs }
                 .take(MAX_CACHED_CANDIDATES)
@@ -207,8 +261,9 @@ class AutoVpnCacheStore(context: Context? = null) {
     companion object {
         private const val PREFS_NAME = "maxnet_auto_free_vpn_cache"
         private const val KEY_METRICS_JSON = "cached_candidate_metrics_v1"
+        private const val KEY_CATALOG_URIS_JSON = "cached_catalog_uris_v1"
         private const val KEY_MANIFEST_JSON = "cached_manifest_v1"
-        private const val MAX_CACHED_CANDIDATES = 120
+        private const val MAX_CACHED_CANDIDATES = 250
         const val AUTO_CACHE_GROUP = "AutoFreeVPN"
     }
 }

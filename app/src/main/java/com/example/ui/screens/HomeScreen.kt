@@ -142,6 +142,7 @@ fun HomeScreen(
     onToggleConnect: () -> Unit,
     onTestActiveLatency: (ServerProfile) -> Unit,
     onAutoSelectBest: () -> Unit,
+    onRefreshFreeVpn: () -> Unit = {},
     onRunQualityTest: () -> Unit = {},
     onCancelQualityTest: () -> Unit = {},
     onSwitchRoutingMode: (RoutingMode) -> Unit,
@@ -235,7 +236,7 @@ fun HomeScreen(
                 ) {
                     Text(
                         text = if (selectedVpnMode == VpnAppMode.FREE_VPN) {
-                            if (isFa) "وی‌پی‌ان رایگان هوشمند (مخزن گیت‌هاب)" else "Intelligent Auto Free VPN"
+                            if (isFa) "وی‌پی‌ان رایگان هوشمند" else "Intelligent Auto Free VPN"
                         } else {
                             if (isFa) "وی‌پی‌ان شخصی من (پروفایل‌ها و اشتراک‌ها)" else "My Personal VPN"
                         },
@@ -288,6 +289,7 @@ fun HomeScreen(
                     usePersian = usePersian,
                     onTestActiveLatency = onTestActiveLatency,
                     onAutoSelectBest = onAutoSelectBest,
+                    onRefreshFreeVpn = onRefreshFreeVpn,
                     onNavigateToProfiles = onNavigateToProfiles
                 )
 
@@ -966,6 +968,7 @@ private fun ActiveServerCard(
     usePersian: Boolean,
     onTestActiveLatency: (ServerProfile) -> Unit,
     onAutoSelectBest: () -> Unit,
+    onRefreshFreeVpn: () -> Unit = {},
     onNavigateToProfiles: () -> Unit = {}
 ) {
     val isConnected = connectionState == VpnConnectionState.CONNECTED
@@ -1318,6 +1321,28 @@ private fun ActiveServerCard(
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         text = stringResource(R.string.auto_select_best),
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                }
+
+                OutlinedButton(
+                    onClick = onRefreshFreeVpn,
+                    enabled = !autoVpnStatus.isRefreshingSubscription,
+                    shape = RoundedCornerShape(12.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MidnightBorder),
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("refresh_free_vpn_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = null,
+                        tint = CyanPrimary,
+                        modifier = Modifier.size(15.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = if (isFa) "بروزرسانی" else "Refresh",
                         style = MaterialTheme.typography.labelMedium
                     )
                 }

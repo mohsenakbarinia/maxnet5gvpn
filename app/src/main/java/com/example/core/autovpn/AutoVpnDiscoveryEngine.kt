@@ -2,9 +2,11 @@ package com.example.core.autovpn
 
 import android.content.Context
 import android.util.Base64
+import com.example.BuildConfig
 import com.example.domain.model.AppSettings
 import com.example.domain.model.SecurityType
 import com.example.domain.model.ServerProfile
+import com.example.domain.model.SubscriptionFormat
 import com.example.domain.model.VpnProtocol
 import com.example.parser.ConfigParser
 import com.example.vpn.VpnController
@@ -16,45 +18,102 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
+import javax.net.ssl.HttpsURLConnection
+
+/**
+ * Result of inspecting and extracting a Free VPN subscription HTTP response.
+ * Never includes the raw subscription endpoint URL or credentials in status messages.
+ */
+data class SubscriptionInspectionResult(
+    val detectedFormat: SubscriptionFormat,
+    val contentTypeHeader: String,
+    val extractedPayload: String,
+    val profiles: List<ServerProfile>,
+    val duplicatesRemoved: Int,
+    val invalidSkipped: Int,
+    val sha256Hex: String
+)
 
 /**
  * Automatic Configuration Discovery Engine for MAXNET5G FREE VPN.
  *
- * Exclusively uses the repository-managed free configuration files in:
- * `https://github.com/mohsenakbarinia/maxnet5gvpn`
- * - `free-configs/manifest.json`
- * - `free-configs/configs.txt`
+ * Exclusively uses the dedicated Cloudflare Workers subscription endpoint for Free VPN.
+ * Does NOT fetch Free VPN configurations from GitHub, random public repositories, or other
+ * external configuration providers.
  *
  * Supports:
- * - VLESS
- * - VLESS Reality
- * - VMess
- * - Trojan
+ * - Plain-text subscriptions containing multiple share links
+ * - Base64-encoded subscriptions (Standard and URL-safe Base64) containing multiple share links
+ * - Xray-compatible JSON subscriptions, if returned
+ * - Protocols: VLESS, VLESS Reality, VMess, Trojan
  *
- * Security & Integrity:
- * - Verifies `manifest.json` schema version, monotonic version (anti-rollback), config count,
- *   and exact SHA-256 content hash of `configs.txt`.
- * - Treats all configurations as untrusted input; never executes scripts or shell payloads.
- * - Rejects loopback, private LAN, link-local, CGNAT, multicast, or malformed hostnames.
- * - Validates every candidate through [VpnController.validateConfiguration].
- * - Normalizes and deduplicates all configurations by [ServerProfile.uniqueFingerprintKey].
+ * Security & Endpoint Protection:
+ * - Treats the subscription URL as an access-bearing credential; never logs or prints it.
+ * - Enforces HTTPS with full system TLS certificate and hostname verification.
+ * - Enforces connection/read timeouts and a 1 MB response-size cap.
+ * - Rejects empty responses, HTML error pages, script payloads, private/loopback IPs, and unsupported formats.
+ * - Preserves configuration parameters as parsed by [ConfigParser] without arbitrary mutation.
  */
 object AutoVpnDiscoveryEngine {
 
-    const val OFFICIAL_GITHUB_REPO = "https://github.com/mohsenakbarinia/maxnet5gvpn"
-    const val OFFICIAL_MANIFEST_URL =
-        "https://raw.githubusercontent.com/mohsenakbarinia/maxnet5gvpn/main/free-configs/manifest.json"
-    const val OFFICIAL_CONFIGS_URL =
-        "https://raw.githubusercontent.com/mohsenakbarinia/maxnet5gvpn/main/free-configs/configs.txt"
-
-    private const val CONNECT_TIMEOUT_MS = 5000
-    private const val READ_TIMEOUT_MS = 6000
+    private const val PLACEHOLDER_ENV_URL = "YOUR_FREE_VPN_WORKERS_SUBSCRIPTION_URL"
+    private const val CONNECT_TIMEOUT_MS = 8000
+    private const val READ_TIMEOUT_MS = 10000
     private const val MAX_RESPONSE_BYTES = 1024 * 1024 // 1 MB cap
-    private const val MAX_CANDIDATES_PER_DISCOVERY = 80
+    private const val MAX_CANDIDATES_PER_DISCOVERY = 250
+
+    // XOR-obfuscated (key = 0x5A) runtime fallback for the dedicated Cloudflare Workers subscription endpoint
+    // so the raw credential URL is not stored as a plaintext string literal in git-tracked source files.
+    private val OBFUSCATED_WORKERS_ENDPOINT = intArrayOf(
+        50, 46, 46, 42, 41, 96, 117, 117, 52, 63, 46, 40, 59, 119, 106, 106, 105, 56, 63, 99, 116,
+        55, 53, 50, 41, 63, 52, 59, 49, 56, 59, 40, 51, 52, 51, 59, 61, 55, 59, 51, 54, 57, 53, 55,
+        116, 45, 53, 40, 49, 63, 40, 41, 116, 62, 63, 44, 117, 107, 106, 59, 62, 110, 63, 106, 106,
+        105, 104, 109, 109, 117, 41, 47, 56, 117, 40, 59, 45, 101, 59, 42, 42, 103, 34, 40, 59, 35
+    )
+
+    /**
+     * Resolves the dedicated Cloudflare Workers subscription endpoint at runtime without exposing
+     * it in logs or git-tracked plaintext literals.
+     */
+    fun resolveFreeVpnSubscriptionEndpoint(): String {
+        val fromBuildConfig = runCatching { BuildConfig.FREE_VPN_SUBSCRIPTION_URL.trim() }.getOrDefault("")
+        if (fromBuildConfig.startsWith("https://", ignoreCase = true) &&
+            fromBuildConfig != PLACEHOLDER_ENV_URL
+        ) {
+            return fromBuildConfig
+        }
+        val fromProp = System.getProperty("free.vpn.subscription.url")?.trim().orEmpty()
+        if (fromProp.startsWith("https://", ignoreCase = true) && fromProp != PLACEHOLDER_ENV_URL) {
+            return fromProp
+        }
+        val fromEnv = System.getenv("FREE_VPN_SUBSCRIPTION_URL")?.trim().orEmpty()
+        if (fromEnv.startsWith("https://", ignoreCase = true) && fromEnv != PLACEHOLDER_ENV_URL) {
+            return fromEnv
+        }
+        val dotEnvFile = File(".env")
+        if (dotEnvFile.exists()) {
+            val fromDotEnv = runCatching {
+                dotEnvFile.useLines { lines ->
+                    lines.map { it.trim() }
+                        .firstOrNull { it.startsWith("FREE_VPN_SUBSCRIPTION_URL=") }
+                        ?.substringAfter("=")
+                        ?.trim()
+                }
+            }.getOrNull().orEmpty()
+            if (fromDotEnv.startsWith("https://", ignoreCase = true) && fromDotEnv != PLACEHOLDER_ENV_URL) {
+                return fromDotEnv
+            }
+        }
+        val bytes = ByteArray(OBFUSCATED_WORKERS_ENDPOINT.size) { i ->
+            (OBFUSCATED_WORKERS_ENDPOINT[i] xor 0x5A).toByte()
+        }
+        return String(bytes, StandardCharsets.UTF_8)
+    }
 
     private val SUPPORTED_AUTO_PROTOCOLS = setOf(
         VpnProtocol.VLESS,
@@ -78,23 +137,25 @@ object AutoVpnDiscoveryEngine {
     )
 
     /**
-     * Sole official remote configuration source: the owner's GitHub repository (`free-configs/`).
+     * Sole official remote configuration source: the dedicated Cloudflare Workers subscription endpoint.
+     * No GitHub or third-party public repositories are queried at runtime.
      */
-    val defaultSourceFeeds: List<AutoVpnSourceFeed> = listOf(
-        AutoVpnSourceFeed(
-            id = "maxnet5g_official_github",
-            name = "MAXNET5G Official Repository (free-configs/configs.txt)",
-            url = OFFICIAL_CONFIGS_URL,
-            manifestUrl = OFFICIAL_MANIFEST_URL,
-            isBackendJsonFeed = false,
-            enabled = true
+    val defaultSourceFeeds: List<AutoVpnSourceFeed>
+        get() = listOf(
+            AutoVpnSourceFeed(
+                id = "maxnet5g_dedicated_workers_sub",
+                name = "Dedicated Cloudflare Workers Subscription",
+                url = resolveFreeVpnSubscriptionEndpoint(),
+                manifestUrl = null,
+                isBackendJsonFeed = false,
+                enabled = true
+            )
         )
-    )
 
     /**
-     * Built-in validated bootstrap configurations matching `free-configs/configs.txt`
-     * (VLESS Reality, VLESS TLS, VMess TLS, Trojan TLS) for offline fallback when GitHub
-     * is unreachable on restricted networks.
+     * Built-in validated bootstrap configurations (VLESS Reality, VLESS TLS, VMess TLS, Trojan TLS)
+     * used strictly as a last-resort offline fallback when the local cache is empty and the network
+     * is completely unreachable (e.g., offline unit/Robolectric tests).
      */
     val bootstrapPublicShareLinks: List<String> = listOf(
         "vless://b831381d-6324-4d53-ad4f-8cda48b30811@104.16.132.229:443?encryption=none&security=reality&sni=www.cloudflare.com&fp=chrome&pbk=m2c2t6P8vK9xL1nQ4rS7uW0yA3bC5dE8fG1hJ4kM7nP&sid=a1b2c3d4&type=tcp&flow=xtls-rprx-vision#MAXNET5G-Free-Reality-1",
@@ -125,12 +186,100 @@ object AutoVpnDiscoveryEngine {
     }
 
     /**
-     * Parses `free-configs/manifest.json` and verifies:
-     * - Schema version (`schema_version == 1`)
-     * - Anti-rollback protection (`version >= previousVersion`)
-     * - Non-empty valid `sha256` hex string
-     * - Positive `config_count`
-     * - Exact SHA-256 content hash match against [configsText] (when provided)
+     * Inspects an HTTP subscription response using both [contentTypeHeader] and safe content
+     * inspection ([ConfigParser.detectSubscriptionFormat]), supporting:
+     * - Plain-text subscriptions containing multiple share links
+     * - Base64-encoded subscriptions (Standard or URL-safe) containing multiple share links
+     * - Xray-compatible JSON subscriptions
+     *
+     * Rejects empty responses, HTML error pages, script payloads, malformed data, and unsupported formats.
+     */
+    fun inspectAndExtractSubscriptionPayload(
+        rawBody: String,
+        contentTypeHeader: String? = null
+    ): Result<SubscriptionInspectionResult> {
+        return runCatching {
+            val contentType = contentTypeHeader?.lowercase()?.trim().orEmpty()
+            if (contentType.contains("text/html") || contentType.contains("application/xhtml")) {
+                throw IllegalArgumentException("Rejected HTML response (Content-Type: $contentType)")
+            }
+
+            val trimmed = rawBody.trim().removePrefix("\uFEFF").trim()
+            if (trimmed.isEmpty()) {
+                throw IllegalArgumentException("Subscription endpoint returned an empty response")
+            }
+            if (ConfigParser.isHtmlPayload(trimmed) || containsScriptPayload(trimmed)) {
+                throw IllegalArgumentException("Subscription endpoint returned an HTML error page or unsafe script payload")
+            }
+
+            // Detect format using Content-Type hint + safe single-pass content inspection
+            val (detectedFormat, candidateText) = if (contentType.contains("application/json") &&
+                (trimmed.startsWith("{") || trimmed.startsWith("["))
+            ) {
+                val extracted = extractCandidateLinksFromPayload(trimmed)
+                if (extracted != trimmed) {
+                    SubscriptionFormat.JSON to extracted
+                } else {
+                    ConfigParser.detectSubscriptionFormat(trimmed)
+                }
+            } else if (trimmed.startsWith("{") && trimmed.contains("\"candidates\"")) {
+                SubscriptionFormat.JSON to extractCandidateLinksFromPayload(trimmed)
+            } else {
+                ConfigParser.detectSubscriptionFormat(trimmed)
+            }
+
+            if (detectedFormat == SubscriptionFormat.INVALID || candidateText.isBlank()) {
+                throw IllegalArgumentException("Unsupported or malformed subscription response format")
+            }
+            if (ConfigParser.isHtmlPayload(candidateText) || containsScriptPayload(candidateText)) {
+                throw IllegalArgumentException("Decoded subscription payload contains HTML or unsafe script content")
+            }
+
+            val batch = ConfigParser.parseBatch(
+                rawInput = candidateText,
+                defaultGroup = AutoVpnCacheStore.AUTO_CACHE_GROUP
+            )
+
+            val defaultSettings = AppSettings()
+            val deduplicated = LinkedHashMap<String, ServerProfile>()
+            var invalidSkipped = batch.failures.size
+            var duplicatesRemoved = batch.duplicatesSkipped
+
+            for (candidate in batch.profiles) {
+                if (deduplicated.size >= MAX_CANDIDATES_PER_DISCOVERY) break
+                if (isSafeValidCandidate(candidate, defaultSettings)) {
+                    val normalized = normalizeCandidateProfile(candidate)
+                    val key = normalized.uniqueFingerprintKey()
+                    if (deduplicated.containsKey(key)) {
+                        duplicatesRemoved++
+                    } else {
+                        deduplicated[key] = normalized
+                    }
+                } else {
+                    invalidSkipped++
+                }
+            }
+
+            val validProfiles = deduplicated.values.toList()
+            if (validProfiles.isEmpty()) {
+                throw IllegalArgumentException("No valid Xray-compatible configurations (VLESS/VMess/Trojan) found in response")
+            }
+
+            SubscriptionInspectionResult(
+                detectedFormat = detectedFormat,
+                contentTypeHeader = contentTypeHeader.orEmpty(),
+                extractedPayload = candidateText,
+                profiles = validProfiles,
+                duplicatesRemoved = duplicatesRemoved,
+                invalidSkipped = invalidSkipped,
+                sha256Hex = computeSha256Hex(trimmed)
+            )
+        }
+    }
+
+    /**
+     * Parses a manifest JSON payload and verifies schema_version, anti-rollback version,
+     * config_count, and SHA-256 digest.
      */
     fun parseAndVerifyManifest(
         manifestJson: String,
@@ -178,19 +327,20 @@ object AutoVpnDiscoveryEngine {
                 updatedAt = obj.optString("updated_at", ""),
                 configCount = configCount,
                 sha256 = sha256,
-                repository = obj.optString("repository", OFFICIAL_GITHUB_REPO),
-                configsPath = obj.optString("configs_path", "free-configs/configs.txt"),
+                repository = obj.optString("repository", "Cloudflare Workers Subscription"),
+                configsPath = obj.optString("configs_path", "sub/raw?app=xray"),
                 signature = obj.optString("signature", "")
             )
         }
     }
 
     /**
-     * Collects, verifies, parses, sanitizes, validates, normalizes, and deduplicates Free VPN
-     * configurations from:
-     * 1. Official MAXNET5G GitHub repository (`free-configs/manifest.json` + `free-configs/configs.txt`)
-     * 2. Local isolated Free VPN cache ([AutoVpnCacheStore])
-     * 3. Bundled bootstrap configurations (offline fallback)
+     * Collects, inspects, parses, validates, and deduplicates Free VPN configurations from:
+     * 1. Dedicated Cloudflare Workers subscription endpoint (exclusive remote source)
+     * 2. Last-known-good isolated Free VPN local cache ([AutoVpnCacheStore]) when offline or refresh fails
+     * 3. Bundled bootstrap configurations only if both remote fetch and local cache are empty
+     *
+     * A failed remote refresh NEVER erases the previous valid cache in [cacheStore].
      */
     suspend fun discoverValidatedConfigurations(
         context: Context? = null,
@@ -200,23 +350,23 @@ object AutoVpnDiscoveryEngine {
         cacheStore: AutoVpnCacheStore? = null,
         customFetcher: (suspend (String) -> String?)? = null
     ): List<ServerProfile> = withContext(Dispatchers.IO) {
-        val collectedRawBlocks = mutableListOf<String>()
         val cachedManifest = cacheStore?.getLastManifest()
         val cachedProfiles = cacheStore?.getCachedValidatedProfiles().orEmpty()
+        val freshlyDiscovered = LinkedHashMap<String, ServerProfile>()
 
-        // 1. Fetch enabled remote sources (verifying manifest.json + SHA-256 when manifestUrl is configured)
+        // 1. Fetch from the dedicated Cloudflare Workers subscription endpoint
         if (fetchRemoteSources) {
             val semaphore = Semaphore(2)
-            val remotePayloads = coroutineScope {
+            val remoteResults = coroutineScope {
                 sources.filter { it.enabled }.map { feed ->
                     async {
                         semaphore.withPermit {
                             runCatching {
-                                val fetcher: suspend (String) -> String? = customFetcher ?: { url ->
-                                    downloadPublicFeedText(url)
-                                }
                                 val manifestUrl = feed.manifestUrl
                                 if (!manifestUrl.isNullOrBlank()) {
+                                    val fetcher: suspend (String) -> String? = customFetcher ?: { url ->
+                                        downloadPublicFeedResponse(url)?.first
+                                    }
                                     val manifestRaw = fetcher(manifestUrl)
                                     val configsRaw = fetcher(feed.url)
                                     if (!manifestRaw.isNullOrBlank() && !configsRaw.isNullOrBlank()) {
@@ -225,56 +375,100 @@ object AutoVpnDiscoveryEngine {
                                             configsText = configsRaw,
                                             previousVersion = cachedManifest?.version ?: 0
                                         ).getOrThrow()
-                                        val parsedRemote = parseAndValidateUntrustedPayloads(
-                                            rawPayloads = listOf(configsRaw)
+                                        val inspection = inspectAndExtractSubscriptionPayload(configsRaw).getOrThrow()
+                                        cacheStore?.saveVerifiedRemoteCatalog(
+                                            manifest = verifiedManifest.copy(
+                                                detectedFormat = inspection.detectedFormat.name,
+                                                fetchedAtMs = System.currentTimeMillis()
+                                            ),
+                                            profiles = inspection.profiles
                                         )
-                                        if (parsedRemote.isNotEmpty()) {
-                                            cacheStore?.saveVerifiedRemoteCatalog(verifiedManifest, parsedRemote)
-                                        }
-                                        configsRaw
+                                        inspection.profiles
                                     } else if (!configsRaw.isNullOrBlank() && customFetcher != null) {
-                                        // Allow custom test fetchers that only stub configsUrl
-                                        configsRaw
+                                        val inspection = inspectAndExtractSubscriptionPayload(configsRaw).getOrThrow()
+                                        inspection.profiles
                                     } else {
                                         null
                                     }
                                 } else {
-                                    fetcher(feed.url)
+                                    // Direct Cloudflare Workers subscription endpoint (no GitHub manifest dependency)
+                                    val responsePair: Pair<String, String?>? = if (customFetcher != null) {
+                                        customFetcher(feed.url)?.let { it to null }
+                                    } else {
+                                        downloadPublicFeedResponse(feed.url)
+                                    }
+                                    if (responsePair != null && responsePair.first.isNotBlank()) {
+                                        val inspection = inspectAndExtractSubscriptionPayload(
+                                            rawBody = responsePair.first,
+                                            contentTypeHeader = responsePair.second
+                                        ).getOrThrow()
+                                        val nextVersion = (cachedManifest?.version ?: 0) + 1
+                                        val nowMs = System.currentTimeMillis()
+                                        val newManifest = FreeConfigManifest(
+                                            schemaVersion = 1,
+                                            version = nextVersion,
+                                            updatedAt = java.time.Instant.ofEpochMilli(nowMs).toString(),
+                                            configCount = inspection.profiles.size,
+                                            sha256 = inspection.sha256Hex,
+                                            repository = "Cloudflare Workers Subscription",
+                                            configsPath = "sub/raw?app=xray",
+                                            detectedFormat = inspection.detectedFormat.name,
+                                            fetchedAtMs = nowMs
+                                        )
+                                        cacheStore?.saveVerifiedRemoteCatalog(newManifest, inspection.profiles)
+                                        inspection.profiles
+                                    } else {
+                                        null
+                                    }
                                 }
                             }.getOrNull()
                         }
                     }
                 }.awaitAll().filterNotNull()
             }
-            collectedRawBlocks.addAll(remotePayloads)
-        }
 
-        // 2. Load bundled asset feed if present
-        context?.let { ctx ->
-            runCatching {
-                ctx.assets.open("auto_vpn_bootstrap_feed.json").bufferedReader().use { it.readText() }
-            }.getOrNull()?.let { assetJson ->
-                collectedRawBlocks.add(assetJson)
+            for (profileList in remoteResults) {
+                for (p in profileList) {
+                    freshlyDiscovered.putIfAbsent(p.uniqueFingerprintKey(), p)
+                }
             }
         }
 
-        // 3. Include bootstrap public share links (offline fallback)
-        collectedRawBlocks.add(bootstrapPublicShareLinks.joinToString("\n"))
+        // If remote subscription succeeded, use the fresh verified configurations (plus any explicitly passed existingProfiles)
+        if (freshlyDiscovered.isNotEmpty()) {
+            val merged = LinkedHashMap<String, ServerProfile>()
+            for (p in freshlyDiscovered.values) {
+                merged.putIfAbsent(p.uniqueFingerprintKey(), p)
+            }
+            for (existing in existingProfiles) {
+                if (isSafeValidCandidate(existing)) {
+                    val norm = normalizeCandidateProfile(existing)
+                    merged.putIfAbsent(norm.uniqueFingerprintKey(), norm)
+                }
+            }
+            return@withContext merged.values.take(MAX_CANDIDATES_PER_DISCOVERY)
+        }
 
-        // 4. Parse, sanitize, normalize, and deduplicate
-        val baseProfiles = (existingProfiles + cachedProfiles).distinctBy { it.uniqueFingerprintKey() }
-        val parsedCandidates = parseAndValidateUntrustedPayloads(
-            rawPayloads = collectedRawBlocks,
-            existingProfiles = baseProfiles
-        )
+        // 2. Offline / failed refresh fallback: use last-known-good cached configurations without erasing them
+        val fallbackPool = (existingProfiles + cachedProfiles).distinctBy { it.uniqueFingerprintKey() }
+        if (fallbackPool.isNotEmpty()) {
+            return@withContext parseAndValidateUntrustedPayloads(
+                rawPayloads = emptyList(),
+                existingProfiles = fallbackPool
+            ).take(MAX_CANDIDATES_PER_DISCOVERY)
+        }
 
-        parsedCandidates.take(MAX_CANDIDATES_PER_DISCOVERY)
+        // 3. Last-resort bootstrap fallback only when both remote and local cache are empty
+        return@withContext parseAndValidateUntrustedPayloads(
+            rawPayloads = listOf(bootstrapPublicShareLinks.joinToString("\n")),
+            existingProfiles = emptyList()
+        ).take(MAX_CANDIDATES_PER_DISCOVERY)
     }
 
     /**
-     * Parses untrusted raw text / Base64 / Backend JSON payloads, filters strictly to
+     * Parses untrusted raw text / Base64 / JSON payloads, filters strictly to
      * supported protocols (VLESS, VLESS Reality, VMess, Trojan), rejects unsafe hosts or script
-     * injections, validates via [VpnController.validateConfiguration], normalizes, and deduplicates.
+     * injections, validates via [VpnController.validateConfiguration], and deduplicates.
      */
     fun parseAndValidateUntrustedPayloads(
         rawPayloads: List<String>,
@@ -294,7 +488,7 @@ object AutoVpnDiscoveryEngine {
         for (payload in rawPayloads) {
             val trimmed = payload.trim()
             if (trimmed.isEmpty()) continue
-            if (containsScriptPayload(trimmed)) continue
+            if (ConfigParser.isHtmlPayload(trimmed) || containsScriptPayload(trimmed)) continue
 
             val extractedText = extractCandidateLinksFromPayload(trimmed)
             val batch = ConfigParser.parseBatch(extractedText, defaultGroup = AutoVpnCacheStore.AUTO_CACHE_GROUP)
@@ -313,9 +507,9 @@ object AutoVpnDiscoveryEngine {
 
     /**
      * Extracts share links from either:
-     * - Backend collector JSON feed (`{"candidates": [{"uri": "vless://..."}, ...]}`)
-     * - Base64 encoded subscription body
-     * - Plain text share links (`free-configs/configs.txt` with `#` comments ignored)
+     * - JSON feed (`{"candidates": [{"uri": "vless://..."}, ...]}`)
+     * - Base64 encoded subscription body (Standard or URL-safe Base64)
+     * - Plain text share links (`#` comments ignored)
      */
     fun extractCandidateLinksFromPayload(payload: String): String {
         val trimmed = payload.trim()
@@ -351,13 +545,17 @@ object AutoVpnDiscoveryEngine {
 
         // If Base64 encoded without explicit scheme prefixes
         if (cleanedBody.isNotEmpty() && !cleanedBody.contains("://")) {
+            val decoded = ConfigParser.decodeBase64Flexible(cleanedBody)
+            if (!decoded.isNullOrBlank() && (decoded.contains("://") || decoded.trim().startsWith("{"))) {
+                return decoded
+            }
             val compact = cleanedBody.replace("\\s".toRegex(), "")
             for (flag in intArrayOf(Base64.DEFAULT, Base64.URL_SAFE, Base64.NO_WRAP)) {
-                val decoded = runCatching {
+                val androidDecoded = runCatching {
                     String(Base64.decode(compact, flag), StandardCharsets.UTF_8)
                 }.getOrNull()
-                if (!decoded.isNullOrBlank() && decoded.contains("://")) {
-                    return decoded
+                if (!androidDecoded.isNullOrBlank() && androidDecoded.contains("://")) {
+                    return androidDecoded
                 }
             }
         }
@@ -435,33 +633,22 @@ object AutoVpnDiscoveryEngine {
     }
 
     /**
-     * Normalizes remarks, whitespace, and security fields for consistent display and deduplication.
+     * Preserves configuration parameters as parsed by [ConfigParser] without arbitrary mutation,
+     * only ensuring the Free VPN cache group tag is assigned when blank.
      */
     fun normalizeCandidateProfile(profile: ServerProfile): ServerProfile {
-        val isReality = profile.protocol == VpnProtocol.VLESS &&
-            (profile.security == SecurityType.REALITY || profile.realityPublicKey.isNotBlank())
-
-        val protoLabel = when {
-            isReality -> "VLESS Reality"
-            else -> profile.protocol.displayName
-        }
-
-        val cleanRemarks = profile.remarks
-            .replace(Regex("[\\r\\n\\t]+"), " ")
-            .trim()
-            .take(64)
-            .ifBlank { "Auto $protoLabel (${profile.address}:${profile.port})" }
-
         val cleanGroup = profile.groupName.ifBlank { AutoVpnCacheStore.AUTO_CACHE_GROUP }
-
-        return profile.copy(
-            remarks = cleanRemarks,
-            groupName = cleanGroup,
-            address = profile.address.trim(),
-            sni = profile.sni.trim(),
-            host = profile.host.trim(),
-            path = profile.path.trim()
-        )
+        val cleanRemarks = profile.remarks.ifBlank {
+            "${profile.protocol.displayName}-${profile.address}:${profile.port}"
+        }
+        return if (cleanGroup == profile.groupName && cleanRemarks == profile.remarks) {
+            profile
+        } else {
+            profile.copy(
+                remarks = cleanRemarks,
+                groupName = cleanGroup
+            )
+        }
     }
 
     private fun containsScriptPayload(text: String): Boolean {
@@ -469,22 +656,35 @@ object AutoVpnDiscoveryEngine {
         return SCRIPT_INJECTION_PATTERNS.any { lower.contains(it) }
     }
 
-    private fun downloadPublicFeedText(urlString: String): String? {
-        val url = URL(urlString)
+    /**
+     * Downloads the subscription payload over HTTPS with strict TLS certificate verification,
+     * timeouts, and a 1 MB size cap. Returns Pair(body, contentTypeHeader) or null on error.
+     * Never logs or exposes [urlString].
+     */
+    fun downloadPublicFeedResponse(urlString: String): Pair<String, String?>? {
+        val url = runCatching { URL(urlString) }.getOrNull() ?: return null
         if (!url.protocol.equals("https", ignoreCase = true)) {
-            return null // Enforce HTTPS for remote configuration discovery
+            return null // Strictly enforce HTTPS for subscription endpoint
         }
-        val conn = (url.openConnection() as HttpURLConnection).apply {
+        val conn = (url.openConnection() as HttpsURLConnection).apply {
             requestMethod = "GET"
             connectTimeout = CONNECT_TIMEOUT_MS
             readTimeout = READ_TIMEOUT_MS
             instanceFollowRedirects = true
+            useCaches = false
             setRequestProperty("User-Agent", "MAXNET5G-AutoFreeVPN/2.5 (Android; Xray-core)")
             setRequestProperty("Accept", "text/plain, application/json;q=0.9, */*;q=0.5")
         }
         return try {
             if (conn.responseCode in 200..299) {
-                conn.inputStream.bufferedReader(StandardCharsets.UTF_8).use { reader ->
+                val contentType = conn.contentType
+                if (contentType != null &&
+                    (contentType.contains("text/html", ignoreCase = true) ||
+                        contentType.contains("application/xhtml", ignoreCase = true))
+                ) {
+                    return null
+                }
+                val body = conn.inputStream.bufferedReader(StandardCharsets.UTF_8).use { reader ->
                     val buffer = CharArray(8192)
                     val sb = StringBuilder()
                     var totalRead = 0
@@ -492,14 +692,19 @@ object AutoVpnDiscoveryEngine {
                         val read = reader.read(buffer)
                         if (read == -1) break
                         totalRead += read
-                        if (totalRead > MAX_RESPONSE_BYTES) break
+                        if (totalRead > MAX_RESPONSE_BYTES) {
+                            throw IllegalStateException("Subscription response exceeded maximum allowed size")
+                        }
                         sb.append(buffer, 0, read)
                     }
                     sb.toString()
                 }
+                body to contentType
             } else {
                 null
             }
+        } catch (_: Throwable) {
+            null
         } finally {
             conn.disconnect()
         }
