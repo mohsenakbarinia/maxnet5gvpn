@@ -98,8 +98,18 @@ class SingBoxCoreAdapter : CoreEngine {
         )
     }
 
-    private fun findAvailableLoopbackPortPair(): Int {
+    private suspend fun findAvailableLoopbackPortPair(preferredPort: Int? = null): Int {
         val loopback = InetAddress.getByName("127.0.0.1")
+        if (preferredPort != null && preferredPort in 1024..65530) {
+            for (attempt in 1..3) {
+                val free = runCatching {
+                    ServerSocket(preferredPort, 1, loopback).use { true } &&
+                        ServerSocket(preferredPort + 1, 1, loopback).use { true }
+                }.getOrDefault(false)
+                if (free) return preferredPort
+                if (attempt < 3) delay(40L)
+            }
+        }
         for (candidate in listOf(10808, 10818, 10828, 20808)) {
             val free = runCatching {
                 ServerSocket(candidate, 1, loopback).use { true } &&
@@ -115,12 +125,13 @@ class SingBoxCoreAdapter : CoreEngine {
         settings: AppSettings,
         customRules: List<RoutingRuleItem>,
         protectSocket: (Int) -> Boolean,
-        onLog: (String, String, String) -> Unit
+        onLog: (String, String, String) -> Unit,
+        preferredLocalSocksPort: Int?
     ): Result<Int> = withContext(Dispatchers.IO) {
         stop()
         _status.value = VpnConnectionState.PREPARING
         try {
-            val allocatedPort = findAvailableLoopbackPortPair()
+            val allocatedPort = findAvailableLoopbackPortPair(preferredLocalSocksPort)
             val sbValidation = validateConfig(profile, settings, customRules, allocatedPort)
             if (!sbValidation.isValid) {
                 _status.value = VpnConnectionState.ERROR

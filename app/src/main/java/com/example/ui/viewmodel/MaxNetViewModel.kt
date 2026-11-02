@@ -177,6 +177,7 @@ class MaxNetViewModel(application: Application) : AndroidViewModel(application) 
     val selectedVpnModeState: StateFlow<VpnAppMode> = VpnController.selectedVpnMode
     val ownershipState: StateFlow<ConnectionOwnership> = VpnController.ownershipState
     val activeFreeProfileState: StateFlow<ServerProfile?> = VpnController.activeFreeProfile
+    val resilienceState: StateFlow<com.example.core.resilience.ResilienceUiSnapshot> = VpnController.resilienceState
 
     val connectionState: StateFlow<VpnConnectionState> = VpnController.connectionState
     val statisticsState: StateFlow<EngineStatistics> = VpnController.statistics
@@ -1476,10 +1477,157 @@ class MaxNetViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    // National Internet Resilience & Smart Global Connectivity Controls
+    fun runResilienceNetworkAssessment() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val app = getApplication<Application>()
+            val settings = settingsState.value
+            VpnController.syncResilienceSettings(app, settings)
+            val cm = app.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager
+            val activeNet = cm?.activeNetwork
+            val caps = activeNet?.let { cm.getNetworkCapabilities(it) }
+            val isMetered = cm?.isActiveNetworkMetered ?: false
+            val netType = when {
+                activeNet == null || caps == null -> com.example.core.resilience.TransportKind.NONE
+                caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) -> com.example.core.resilience.TransportKind.WIFI
+                caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR) -> com.example.core.resilience.TransportKind.CELLULAR
+                caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET) -> com.example.core.resilience.TransportKind.ETHERNET
+                else -> com.example.core.resilience.TransportKind.OTHER
+            }
+            val snap = com.example.core.resilience.NetworkSnapshot(
+                networkHandleId = activeNet?.networkHandle,
+                transportKind = netType,
+                hasInternetCapability = caps?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) == true,
+                isValidated = caps?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true,
+                isNotVpn = caps?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_NOT_VPN) != false,
+                isMetered = isMetered,
+                underlyingNetwork = activeNet
+            )
+            VpnController.connectivityEngine.onUnderlyingNetworkChanged(snap)
+            val assessment = VpnController.connectivityEngine.assessUnderlay(
+                networkSnapshot = snap,
+                underlayNetwork = activeNet,
+                forceRefresh = true
+            )
+            val isFa = settings.languageCode.startsWith("fa", ignoreCase = true)
+            val statusMsg = if (isFa) {
+                "${VpnController.resilienceState.value.persianTitle} (${assessment.confidencePercent}%)"
+            } else {
+                "Network condition: ${assessment.state.name} (${assessment.confidencePercent}%)"
+            }
+            showMessage(statusMsg)
+            repository.appendLog("INFO", "ResilienceEngine", "Completed network condition assessment: ${assessment.state.name} (${assessment.confidencePercent}%)")
+        }
+    }
+
+    fun setResilienceMasterEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            repository.updateSettings { it.copy(resilienceMasterEnabled = enabled) }
+            VpnController.syncResilienceSettings(getApplication(), settingsState.value.copy(resilienceMasterEnabled = enabled))
+        }
+    }
+
+    fun setLowDataProbingMode(enabled: Boolean) {
+        viewModelScope.launch {
+            repository.updateSettings { it.copy(lowDataProbingMode = enabled) }
+            VpnController.syncResilienceSettings(getApplication(), settingsState.value.copy(lowDataProbingMode = enabled))
+        }
+    }
+
+    fun setAllowRuntimeVariants(enabled: Boolean) {
+        viewModelScope.launch {
+            repository.updateSettings { it.copy(allowRuntimeTransportVariants = enabled) }
+            VpnController.syncResilienceSettings(getApplication(), settingsState.value.copy(allowRuntimeTransportVariants = enabled))
+        }
+    }
+
+    fun setMultiNetworkAssistEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            repository.updateSettings { it.copy(multiNetworkAssistEnabled = enabled) }
+            VpnController.syncResilienceSettings(getApplication(), settingsState.value.copy(multiNetworkAssistEnabled = enabled))
+        }
+    }
+
+    fun setRelayFallbackEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            repository.updateSettings { it.copy(relayFallbackEnabled = enabled) }
+            VpnController.syncResilienceSettings(getApplication(), settingsState.value.copy(relayFallbackEnabled = enabled))
+        }
+    }
+
+    fun addAuthorizedRelay(relay: com.example.core.resilience.AuthorizedRelay) {
+        if (!relay.ownerAttested || relay.address.isBlank() || relay.port !in 1..65535) return
+        viewModelScope.launch {
+            repository.updateSettings { current ->
+                val existing = com.example.core.resilience.ResilienceJsonSerializer
+                    .parseAuthorizedRelays(current.authorizedRelaysJson)
+                    .filterNot { it.id == relay.id }
+                val updated = existing + relay
+                val json = com.example.core.resilience.ResilienceJsonSerializer.serializeAuthorizedRelays(updated)
+                val next = current.copy(authorizedRelaysJson = json)
+                VpnController.syncResilienceSettings(getApplication(), next)
+                next
+            }
+            val isFa = settingsState.value.languageCode.startsWith("fa", ignoreCase = true)
+            showMessage(if (isFa) "رله مجاز «${relay.name}» ذخیره شد" else "Saved authorized relay '${relay.name}'")
+        }
+    }
+
+    fun removeAuthorizedRelay(relayId: String) {
+        viewModelScope.launch {
+            repository.updateSettings { current ->
+                val updated = com.example.core.resilience.ResilienceJsonSerializer
+                    .parseAuthorizedRelays(current.authorizedRelaysJson)
+                    .filterNot { it.id == relayId }
+                val json = com.example.core.resilience.ResilienceJsonSerializer.serializeAuthorizedRelays(updated)
+                val next = current.copy(authorizedRelaysJson = json)
+                VpnController.syncResilienceSettings(getApplication(), next)
+                next
+            }
+        }
+    }
+
+    fun addCustomDomesticEndpoint(url: String) {
+        val trimmed = url.trim()
+        if (!VpnController.connectivityEngine.endpointRegistry.isValidHttpsProbeUrl(trimmed)) {
+            val isFa = settingsState.value.languageCode.startsWith("fa", ignoreCase = true)
+            showMessage(
+                if (isFa) "فقط آدرس‌های معتبر HTTPS بدون مشخصات کاربری مجاز هستند"
+                else "Only valid HTTPS URLs without embedded credentials are allowed"
+            )
+            return
+        }
+        viewModelScope.launch {
+            repository.updateSettings { current ->
+                val updated = (current.customDomesticProbeUrls + trimmed).distinct().take(8).toSet()
+                val next = current.copy(customDomesticProbeUrls = updated)
+                VpnController.syncResilienceSettings(getApplication(), next)
+                next
+            }
+        }
+    }
+
+    fun removeCustomDomesticEndpoint(url: String) {
+        viewModelScope.launch {
+            repository.updateSettings { current ->
+                val updated = current.customDomesticProbeUrls - url
+                val next = current.copy(customDomesticProbeUrls = updated)
+                VpnController.syncResilienceSettings(getApplication(), next)
+                next
+            }
+        }
+    }
+
+    fun clearResilienceFailureLogs() {
+        VpnController.connectivityEngine.failureLog.clear()
+        VpnController.connectivityEngine.circuitBreakerRegistry.resetAll()
+    }
+
     fun buildSanitizedDiagnosticReport(): String {
         val diag = diagnosticsState.value
         val settings = settingsState.value
         val logs = logsState.value
+        val resilience = resilienceState.value
         val sb = StringBuilder()
         sb.appendLine("=== MAXNET5G VPN SANITIZED DIAGNOSTIC REPORT ===")
         sb.appendLine("Connection State: ${diag.connectionState.name}")
@@ -1494,12 +1642,21 @@ class MaxNetViewModel(application: Application) : AndroidViewModel(application) 
         sb.appendLine("Bridge Architecture: ${diag.bridgeArchitectureStatus}")
         sb.appendLine("Routing Mode: ${settings.routingMode.name} (Bypass Country: ${settings.bypassCountryCode})")
         sb.appendLine("Split Tunnel Mode: ${settings.splitTunnelMode.name} (${settings.splitTunnelPackages.size} apps)")
+        sb.appendLine("--- National Internet Resilience & Connectivity ---")
+        sb.appendLine("Resilience Master Enabled: ${settings.resilienceMasterEnabled}")
+        sb.appendLine("National Connectivity State: ${resilience.connectivityState.name} (${resilience.confidencePercent}%)")
+        sb.appendLine("Domestic Reachable: ${resilience.domesticReachable.name}")
+        sb.appendLine("International Reachable: ${resilience.internationalReachable}")
+        sb.appendLine("Active Network Type: ${resilience.activeNetworkType.name}")
+        sb.appendLine("Connected Via Authorized Relay: ${resilience.isConnectedViaRelay}")
         sb.appendLine("Last Error: ${diag.lastError ?: "None"}")
+        sb.appendLine("--- Sanitized Resilience Failure Records (${resilience.recentFailures.size}) ---")
+        sb.appendLine(VpnController.connectivityEngine.failureLog.exportSanitizedJson())
         sb.appendLine("--- Redacted Event Logs (${logs.size}) ---")
         for (entry in logs) {
             sb.appendLine("[${entry.level}] [${entry.tag}] ${entry.message}")
         }
-        return LogRedactor.redact(sb.toString())
+        return LogRedactor.redactDiagnostics(sb.toString())
     }
 
     fun checkForUpdates() {

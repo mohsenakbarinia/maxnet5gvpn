@@ -158,6 +158,16 @@ fun HomeScreen(
         summaryFa = "تونل امن"
     ),
     connectionHistory: List<ConnectionHistoryItem> = emptyList(),
+    resilienceSnapshot: com.example.core.resilience.ResilienceUiSnapshot = com.example.core.resilience.ResilienceUiSnapshot(),
+    onRunResilienceAssessment: () -> Unit = {},
+    onToggleMasterResilience: (Boolean) -> Unit = {},
+    onToggleLowDataProbing: (Boolean) -> Unit = {},
+    onToggleRuntimeVariants: (Boolean) -> Unit = {},
+    onToggleRelayFallback: (Boolean) -> Unit = {},
+    onAddAuthorizedRelay: (com.example.core.resilience.AuthorizedRelay) -> Unit = {},
+    onRemoveAuthorizedRelay: (String) -> Unit = {},
+    onAddCustomDomesticEndpoint: (String) -> Unit = {},
+    onRemoveCustomDomesticEndpoint: (String) -> Unit = {},
     onSwitchVpnMode: (VpnAppMode) -> Unit = {},
     onSelectSmartMode: (SmartConnectionMode) -> Unit = {},
     onToggleConnect: () -> Unit,
@@ -185,6 +195,7 @@ fun HomeScreen(
     val context = LocalContext.current
     var showSecurityDialog by remember { mutableStateOf(false) }
     var showHistoryDialog by remember { mutableStateOf(false) }
+    var showRelayResilienceDialog by remember { mutableStateOf(false) }
     val isRobolectric = remember {
         runCatching { Class.forName("androidx.test.core.app.ApplicationProvider") }.isSuccess ||
             android.os.Build.FINGERPRINT.contains("robolectric", ignoreCase = true)
@@ -347,6 +358,20 @@ fun HomeScreen(
                 Spacer(modifier = Modifier.height(12.dp))
 
                 // =========================================================================
+                // NATIONAL INTERNET RESILIENCE & SMART GLOBAL CONNECTIVITY CARD
+                // =========================================================================
+                NationalConnectivityResilienceCard(
+                    snapshot = resilienceSnapshot,
+                    settings = settings,
+                    isFa = isFa,
+                    usePersian = usePersian,
+                    onRunAssessment = onRunResilienceAssessment,
+                    onOpenRelayAndResilienceDialog = { showRelayResilienceDialog = true }
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // =========================================================================
                 // SECURITY CENTER & LEAK PROTECTION CARD
                 // =========================================================================
                 SecurityCenterCard(
@@ -488,6 +513,22 @@ fun HomeScreen(
                 usePersian = usePersian,
                 onDismiss = { showHistoryDialog = false },
                 onClearHistory = onClearConnectionHistory
+            )
+        }
+
+        if (showRelayResilienceDialog) {
+            AuthorizedRelayAndResilienceDialog(
+                settings = settings,
+                isFa = isFa,
+                onDismiss = { showRelayResilienceDialog = false },
+                onToggleMasterResilience = onToggleMasterResilience,
+                onToggleLowDataMode = onToggleLowDataProbing,
+                onToggleRuntimeVariants = onToggleRuntimeVariants,
+                onToggleRelayFallback = onToggleRelayFallback,
+                onAddAuthorizedRelay = onAddAuthorizedRelay,
+                onRemoveAuthorizedRelay = onRemoveAuthorizedRelay,
+                onAddCustomDomesticEndpoint = onAddCustomDomesticEndpoint,
+                onRemoveCustomDomesticEndpoint = onRemoveCustomDomesticEndpoint
             )
         }
     }

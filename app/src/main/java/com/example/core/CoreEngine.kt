@@ -32,7 +32,8 @@ interface CoreEngine {
         settings: AppSettings,
         customRules: List<RoutingRuleItem> = emptyList(),
         protectSocket: (Int) -> Boolean = { true },
-        onLog: (String, String, String) -> Unit = { _, _, _ -> }
+        onLog: (String, String, String) -> Unit = { _, _, _ -> },
+        preferredLocalSocksPort: Int? = null
     ): Result<Int>
 
     suspend fun verifyActiveConnection(

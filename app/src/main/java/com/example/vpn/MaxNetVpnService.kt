@@ -53,8 +53,12 @@ class MaxNetVpnService : VpnService() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var tunInterface: ParcelFileDescriptor? = null
+    private var activeTunSocksPort: Int? = null
+    private var activeTunMtu: Int? = null
+    private var lastNotificationUpdateMs: Long = 0L
     private var connectivityManager: ConnectivityManager? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    private var networkMonitorJob: kotlinx.coroutines.Job? = null
 
     private lateinit var repository: VpnRepository
 
@@ -63,6 +67,7 @@ class MaxNetVpnService : VpnService() {
         val db = MaxNetDatabase.getInstance(applicationContext)
         val dataStore = SettingsDataStore(applicationContext)
         repository = VpnRepository(applicationContext, db.maxNetDao(), dataStore)
+        VpnController.connectivityEngine.initializeAssets(applicationContext)
         createNotificationChannel()
         registerNetworkChangeCallback()
     }
@@ -262,6 +267,23 @@ class MaxNetVpnService : VpnService() {
         settings: AppSettings,
         localSocksPort: Int
     ): Boolean {
+        val targetMtu = settings.mtu.coerceIn(1280, 1500)
+        // Zero-TUN-Teardown optimization: if TUN is already established and TProxyService is forwarding
+        // to the exact same localSocksPort with matching MTU, keep the TUN fd open across Xray restarts!
+        val existingPfd = tunInterface
+        if (existingPfd != null &&
+            TProxyService.isTun2SocksRunning() &&
+            activeTunSocksPort == localSocksPort &&
+            activeTunMtu == targetMtu
+        ) {
+            repository.appendLog(
+                "INFO",
+                "TProxyService",
+                "Zero-TUN-Teardown: Reusing active TUN fd=${existingPfd.fd} -> 127.0.0.1:$localSocksPort"
+            )
+            return true
+        }
+
         TProxyService.stopTun2Socks()
         closeTunInterface()
 
@@ -272,12 +294,14 @@ class MaxNetVpnService : VpnService() {
             context = applicationContext,
             tunFd = pfd.fd,
             socksPort = localSocksPort,
-            mtu = settings.mtu.coerceIn(1280, 1500),
+            mtu = targetMtu,
             enableIpv6 = settings.enableIpv6
         )
 
         return forwarderResult.fold(
             onSuccess = {
+                activeTunSocksPort = localSocksPort
+                activeTunMtu = targetMtu
                 repository.appendLog(
                     "INFO",
                     "TProxyService",
@@ -413,6 +437,8 @@ class MaxNetVpnService : VpnService() {
             tunInterface?.close()
         } catch (_: Exception) {}
         tunInterface = null
+        activeTunSocksPort = null
+        activeTunMtu = null
     }
 
     override fun onRevoke() {
@@ -424,26 +450,40 @@ class MaxNetVpnService : VpnService() {
     }
 
     private fun registerNetworkChangeCallback() {
-        try {
-            val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-            connectivityManager = cm
-            val request = NetworkRequest.Builder()
-                .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-                .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
-                .build()
+        networkMonitorJob?.cancel()
+        networkMonitorJob = serviceScope.launch {
+            val monitor = com.example.core.resilience.AndroidNetworkMonitor(applicationContext)
+            var lastPhysicalHandle: Long? = null
+            monitor.networkSnapshots.collect { snapshot ->
+                val settings = repository.settingsFlow.first()
+                VpnController.syncResilienceSettings(applicationContext, settings)
 
-            val callback = object : ConnectivityManager.NetworkCallback() {
-                override fun onAvailable(network: Network) {
-                    super.onAvailable(network)
-                    serviceScope.launch {
-                        val settings = repository.settingsFlow.first()
+                if (settings.multiNetworkAssistEnabled) {
+                    runCatching {
+                        setUnderlyingNetworks(snapshot.underlyingNetwork?.let { arrayOf(it) })
+                    }
+                }
+
+                VpnController.connectivityEngine.onUnderlyingNetworkChanged(snapshot)
+
+                val previousHandle = lastPhysicalHandle
+                lastPhysicalHandle = snapshot.networkHandle
+
+                if (settings.autoReconnect &&
+                    previousHandle != null &&
+                    snapshot.networkHandle != null &&
+                    snapshot.networkHandle != previousHandle &&
+                    VpnController.connectionState.value == VpnConnectionState.CONNECTED
+                ) {
+                    // First verify whether existing sockets survived the network transition
+                    val engine = VpnController.getEngine(settings.activeEngine)
+                    val stillHealthy = engine.healthCheck().isSuccess
+                    if (!stillHealthy) {
                         val profiles = repository.getAllProfilesSnapshot()
                         val selectedProfile = profiles.find { it.id == settings.selectedProfileId }
                             ?: profiles.firstOrNull()
-                        if (settings.autoReconnect &&
-                            selectedProfile != null &&
-                            VpnController.connectionState.value == VpnConnectionState.CONNECTED
-                        ) {
+                            ?: VpnController.activeFreeProfile.value
+                        if (selectedProfile != null) {
                             VpnController.reconnectWithExponentialBackoff(
                                 establishTunAndForwarder = { port ->
                                     setupTunAndPacketForwarder(selectedProfile, settings, port)
@@ -458,9 +498,7 @@ class MaxNetVpnService : VpnService() {
                     }
                 }
             }
-            cm.registerNetworkCallback(request, callback)
-            networkCallback = callback
-        } catch (_: Exception) {}
+        }
     }
 
     private fun createNotificationChannel() {
@@ -508,6 +546,8 @@ class MaxNetVpnService : VpnService() {
     }
 
     override fun onDestroy() {
+        networkMonitorJob?.cancel()
+        networkMonitorJob = null
         try {
             networkCallback?.let { connectivityManager?.unregisterNetworkCallback(it) }
         } catch (_: Exception) {}

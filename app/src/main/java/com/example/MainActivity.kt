@@ -200,6 +200,7 @@ fun MaxNetAppRoot(viewModel: MaxNetViewModel) {
     val smartSelectionResult by viewModel.smartSelectionResultState.collectAsStateWithLifecycle()
     val securityAudit by viewModel.securityAuditState.collectAsStateWithLifecycle()
     val connectionHistory by viewModel.connectionHistoryState.collectAsStateWithLifecycle()
+    val resilienceSnapshot by viewModel.resilienceState.collectAsStateWithLifecycle()
 
     var currentTab by rememberSaveable { mutableStateOf(MaxNetDestination.HOME) }
 
@@ -375,6 +376,16 @@ fun MaxNetAppRoot(viewModel: MaxNetViewModel) {
                                 smartSelectionResult = smartSelectionResult,
                                 securityAudit = securityAudit,
                                 connectionHistory = connectionHistory,
+                                resilienceSnapshot = resilienceSnapshot,
+                                onRunResilienceAssessment = viewModel::runResilienceNetworkAssessment,
+                                onToggleMasterResilience = viewModel::setResilienceMasterEnabled,
+                                onToggleLowDataProbing = viewModel::setLowDataProbingMode,
+                                onToggleRuntimeVariants = viewModel::setAllowRuntimeVariants,
+                                onToggleRelayFallback = viewModel::setRelayFallbackEnabled,
+                                onAddAuthorizedRelay = viewModel::addAuthorizedRelay,
+                                onRemoveAuthorizedRelay = viewModel::removeAuthorizedRelay,
+                                onAddCustomDomesticEndpoint = viewModel::addCustomDomesticEndpoint,
+                                onRemoveCustomDomesticEndpoint = viewModel::removeCustomDomesticEndpoint,
                                 onSwitchVpnMode = viewModel::switchVpnMode,
                                 onSelectSmartMode = viewModel::setSmartConnectionMode,
                                 onToggleConnect = handleConnectToggle,

@@ -388,7 +388,14 @@ data class AppSettings(
     val killSwitchEnabled: Boolean = false,
     val dnsLeakProtection: Boolean = true,
     val ipv6LeakProtection: Boolean = true,
-    val secureDnsProvider: String = "Cloudflare"
+    val secureDnsProvider: String = "Cloudflare",
+    val resilienceMasterEnabled: Boolean = true,
+    val lowDataProbingMode: Boolean = false,
+    val allowRuntimeTransportVariants: Boolean = false,
+    val multiNetworkAssistEnabled: Boolean = false,
+    val relayFallbackEnabled: Boolean = true,
+    val customDomesticProbeUrls: Set<String> = emptySet(),
+    val authorizedRelaysJson: String = "[]"
 )
 
 enum class QualityTestStage {

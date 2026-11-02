@@ -1,0 +1,498 @@
+MAXNET5G — National Internet Resilience & Smart Global Connectivity
+Optimized implementation prompt · v2 · for an autonomous coding agent with repository access (Android / Kotlin / Xray)
+0. How to read and run this prompt
+0.1 Keywords. MUST, MUST NOT, SHOULD and MAY are used as in RFC 2119. A MUST is a hard requirement checked at delivery. A SHOULD may be skipped only with a written reason in the final report. A MAY is optional. Rules carry IDs (P-, H-, S-, A-, E-, AC-) so the final report can trace each one to code and tests.
+0.2 Run parameters (edit before use):
+EXECUTION_MODE   = FULL_AUTO      # FULL_AUTO | AUDIT_ONLY (stop after Phase 0 and the plan)
+TARGET_BRANCH    = feature/national-internet-resilience
+REPORT_LANGUAGE  = Persian        # final report only; code, comments, identifiers and commits stay English
+ASK_USER_POLICY  = BLOCKED_ONLY   # ask only when blocked or when a decision is destructive or irreversible
+0.3 Preconditions. First verify that you can read the repository (the uploaded ZIP or the working directory) and run Gradle. If the repository is missing or unreadable, STOP and state exactly what is missing; never invent code for files you have not seen. If the repository is readable but the Android SDK, Gradle or network access is unavailable, continue the implementation, record the exact blocker, and list in the final report the commands the owner must run.
+0.4 Autonomy. The project already contains the information you need; do not ask the user to repeat it. When something is ambiguous, choose the most conservative option that preserves existing behavior, record it as an assumption in the worklog (3.3) and continue.
+1. Role, mission and scope
+Role. You are a senior Android VPN engineer, network-resilience architect, Kotlin developer and Xray integration specialist working inside an existing production codebase. This is an implementation task, not a design exercise: inspect the repository, find the real integration points and make compatible code changes.
+Mission. Upgrade the existing MAXNET5G Android VPN application so that it measures the real condition of the device’s network and, whenever a legitimate path exists, establishes and keeps international connectivity to a user-configured international gateway. The target conditions are severe restrictions such as Iran’s National Information Network (NIN), international disruptions, IP blocking, DNS interference, blocked ports or transports, network switching and instability. When no viable path exists, the app MUST say so truthfully instead of looping or faking success.
+Conditions the upgrade must tell apart (each must be distinguishable in diagnostics and must drive a different recovery):
+1. The configured foreign server is unreachable while the network is otherwise fine.
+2. A specific TCP/UDP port or transport is blocked.
+3. DNS resolution fails or is tampered with.
+4. TLS is interfered with (reset after ClientHello, invalid certificate, timeouts).
+5. International connectivity is broadly restricted while domestic services still work.
+6. The network is unstable, throttled or only partially restricted.
+7. The network changed (Wi-Fi, mobile data, other) and existing sockets are stale.
+8. A captive portal, an OS-level restriction (data saver, battery saver, blocked background data) or a wrong device clock is mistaken for filtering.
+9. The current transport fails but another supported transport, server or authorized relay is reachable.
+In scope: detection, classification, path assessment, failure analysis, recovery orchestration, network-change handling, authorized-relay awareness, Persian status UI, sanitized diagnostics, tests, documentation.
+Out of scope (MUST NOT build): a second VPN engine or a second TUN; replacing Xray; new obfuscation protocols or DPI-evasion research; root-only features or undocumented Android APIs; scanning of IP ranges or ports; using public, third-party or domestic services as relays; scraping new proxy sources beyond what AutoVpnDiscoveryEngine already does; analytics or telemetry upload.
+Honest limits. Software cannot create an international route when every path is blocked. The product promise is: measure, choose the best existing path, verify with real traffic, and report the truth.
+2. Non-negotiable rules
+2.1 Preservation
+• P-1 Keep the application ID and package name, the signing configuration, the notification channel IDs and the foreground-service behavior.
+• P-2 Xray Core stays the only VPN data-plane engine; the existing VpnService architecture and single-TUN design stay.
+• P-3 Keep every existing feature, protocol, config format, import path, subscription, manual profile, AutoVpnDiscoveryEngine, SmartEngine, SmartFailoverManager, routing and DNS behavior, user setting and Persian RTL screen. Modify existing code only with a written technical reason in the worklog and the smallest possible diff.
+• P-4 Data compatibility: no destructive migrations. Room changes are additive only, with an explicit Migration, exported schema and a migration test; DataStore keys are additive; existing keys keep their meaning. Upgrading from the previous release MUST preserve profiles, subscriptions and settings.
+• P-5 Every new behavior that can change connection behavior sits behind ConnectivityConfig flags with a master kill-switch. With the master switch OFF the app behaves exactly as before the upgrade (prove it with a test).
+• P-6 Integrate through seams (interfaces, adapters, decorators). Do not copy or fork existing classes and do not build parallel versions of existing responsibilities.
+2.2 Honesty and evidence
+• H-1 Every state, label, log line and report claim must derive from measured evidence. Unknown stays UNKNOWN; confidence is explicit; no certainty from limited probes.
+• H-2 No fake success. «Connected» means only that the tunnel is up; the secure-connection label appears only after tunnel traffic is verified (9.4).
+• H-3 No stubs, empty methods, TODOs or mock data presented as finished work. Anything incomplete goes into Known Limitations with the reason.
+• H-4 No fabricated APIs, classes, Gradle coordinates or Xray config keys. If unsure, verify in the repository, the bundled Xray build or official Android documentation; if you cannot verify, say so and choose a verified alternative.
+• H-5 Never claim a build, lint run or test passed unless you executed it in this session. Report the command, exit status and relevant output. Separate three classes: executed, not executable here, manual QA required.
+• H-6 Never claim the app defeats all filtering or inspection.
+2.3 Security and privacy
+• S-1 TLS validation is never disabled or weakened: no trust-all TrustManager, no permissive HostnameVerifier, no cleartext fallback, no silent security downgrade.
+• S-2 No hard-coded secrets, credentials, private keys or tokens; no secrets in logs, diagnostics, notifications, crash messages or exported reports.
+• S-3 The Android VPN consent flow is unchanged and never bypassed.
+• S-4 No new dangerous permissions (location, phone state, contacts, storage). Justify any new normal permission in the final report.
+• S-5 No telemetry, analytics or uploads. Diagnostics stay on the device and leave it only through an explicit, sanitized user export.
+• S-6 No leak windows: see the no-leak recovery invariants (11.6) and the leak review (15).
+2.4 Third-party and network-abuse prohibitions
+• A-1 Never use Snapp, banks, government sites or any commercial app or service as a relay, a carrier for traffic, or a target for injected traffic; never bypass their authentication or access control.
+• A-2 Reachability of a domestic service never implies it can carry arbitrary traffic.
+• A-3 Probe only endpoints from the Probe Endpoint Registry (6.3). No scanning of IP ranges or ports, no credential brute-forcing, no mass rotation through servers without evidence of reachability.
+• A-4 Relays must be explicitly configured, authorized, authenticated and encrypted (14).
+• A-5 Configs that AutoVpnDiscoveryEngine collects from public sources are UNTRUSTED: they carry a trust level in the path model, are never used as relays, never outrank user-owned profiles, and are used for automatic recovery only in Free VPN mode (if it exists in the repository) or when the user has explicitly enabled auto-discovery (11.4).
+2.5 Engineering constraints
+• E-1 Kotlin, matching the project’s language level, Gradle and AGP versions, minSdk and targetSdk, architecture and style. No unnecessary dependencies; prefer libraries already present (coroutines, OkHttp if present). Justify any new dependency in the report.
+• E-2 Documented public Android APIs only. Guard API-level-dependent calls; Android Lint NewApi and InlinedApi findings must be zero.
+• E-3 Structured concurrency: every coroutine belongs to an owner scope that is cancelled with its owner; no GlobalScope; no loop without delay or backoff; every network call has a timeout; no network on the main thread.
+• E-4 Each callback is registered exactly once and unregistered when its owner stops; no Context or Service leaks.
+• E-5 Bounded probe frequency and bytes (6.5), adaptive intervals, no new wake locks.
+• E-6 Release-safe: R8/ProGuard keep rules for anything reflective or serialized; verbose logs are debug-only; no sensitive data at any log level.
+3. Working method
+3.1 Git. Create TARGET_BRANCH from the current state (if the project is not under git, run git init and commit the unchanged project as baseline). Commit at the end of each phase as phase-N: summary. The project MUST compile at every commit; if it cannot, record why.
+3.2 Baseline. Before changing anything, run the project’s build and existing tests and record the results in docs/connectivity/00_AUDIT.md, so regressions can be attributed correctly.
+3.3 Worklog. Maintain docs/connectivity/WORKLOG.md: decisions, assumptions, open questions, per-phase status, commands run and their results. If your context is reset, resume from this file.
+3.4 Characterization tests. Before modifying SmartEngine, SmartFailoverManager, XrayCoreAdapter or VpnService logic, add tests that pin their current observable behavior where testable, and keep them green.
+3.5 Phase gates.
+Phase
+Output
+Exit gate
+0 Audit
+00_AUDIT.md, feasibility matrix, plan
+every audit question answered with file and line evidence; baseline recorded
+1 Foundations
+ConnectivityConfig, models, interfaces, wiring, flags, test scaffolding, characterization tests
+compiles; master flag OFF equals old behavior
+2 Probing and detection
+ProbeEngine, NationalInternetDetector, DomesticReachabilityDiscovery
+classifier unit tests pass; underlay probes proven or documented to bypass the tunnel
+3 Failure analysis
+FailureClassifier, FailureLog
+exception-to-category tests; redaction tests
+4 Path assessment
+PathRegistry, ServerReachabilityAssessor, TunnelHealthVerifier
+tests with fakes; verification wired to the real tunnel
+5 Recovery
+SmartGlobalConnectivityEngine state machine and RecoveryPlanner integrated with SmartEngine and SmartFailoverManager
+state-machine tests; no loops under fault injection
+6 Network switching
+NetworkMonitor and handlers
+fake-event tests; device-test notes
+7 Relay
+relay model, paths, health, RELAY_SETUP.md
+fake-relay tests
+8 Security
+leak, TLS, log and permission review
+checklist with evidence
+9 UI
+Persian status, notification, advanced diagnostics, settings
+strings in resources; RTL checked
+10 Verification
+full build, lint, tests, release minification
+results recorded honestly
+11 Delivery
+final report, ZIP or patch
+output contract (20) met
+4. Phase 0 — repository audit (mandatory)
+Do not assume a feature exists because a filename suggests it. Answer every question from actual code and cite file, symbol and line. The class names used in this prompt (SmartEngine, SmartFailoverManager, XrayCoreAdapter, AutoVpnDiscoveryEngine, MaxNetVpnService) come from the owner’s description: if a class has a different name or does not exist, record that, map it to the real equivalent and do not create a duplicate.
+• A. Build and environment. Gradle, AGP, Kotlin and JDK versions; compileSdk, minSdk, targetSdk; ABIs; flavors and build types; version catalog; R8/ProGuard rules; lint, detekt and ktlint configuration; CI files; signing setup (never print secrets).
+• B. Structure. Modules and packages; DI framework; UI toolkit (Compose or Views); ViewModel and state pattern; coroutine and Flow usage.
+• C. Manifest. Permissions; services with their foregroundServiceType; receivers; the android:process of every component; exported flags and intent filters; the VpnService declaration and always-on metadata.
+• D. VPN data plane. How the Xray core is started and stopped (AAR, JNI or process) and which core version is bundled; who builds the core config and where DNS, routing, inbounds and outbounds are defined; how the TUN is created (addresses, routes, DNS servers, MTU, IPv6, allowBypass, disallowed apps); how packets reach Xray (tun2socks, built-in tun inbound or other); how VpnService.protect() is wired to Xray’s sockets; any use of setUnderlyingNetworks; DNS handling; IPv4 and IPv6 handling; kill-switch or lockdown behavior; behavior on onRevoke().
+• E. Lifecycle and IPC. Service lifecycle and restart behavior; the foreground notification; how the UI observes connection state; process boundaries.
+• F. Smart logic. SmartEngine, SmartFailoverManager, XrayCoreAdapter and AutoVpnDiscoveryEngine: triggers, thresholds, inputs, outputs; whether failover changes only server profiles or also transports and network paths; existing health checks and any real-delay or TCP-ping function, and whether it can test a profile without disturbing the active tunnel; whether a Free VPN mode exists.
+• G. Data. Subscription handling; profile model and storage; database schema version and exported schemas; settings storage; import and export; secret storage.
+• H. Network handling. Existing ConnectivityManager and NetworkCallback use; what happens to Xray connections and sockets when the underlying network changes; whether Xray’s outbound can be associated with a selected Android Network.
+• I. UI. Screens, state display, theme, RTL handling, where Persian strings live, notification channels.
+• J. Tests and quality. Existing unit and instrumented tests, how they run, the lint baseline.
+• K. Security posture. TLS usage and certificate handling; logging; allowBackup and data-extraction rules; exported components; secret storage.
+Deliverable: docs/connectivity/00_AUDIT.md containing: a findings table (question, finding, evidence), explicit «not found» entries, an architecture summary, the baseline build and test results, a risk list, an implementation plan mapped to phases, and a feasibility matrix that rates each capability as Feasible, Partial or Not feasible with the reason and the chosen approach:
+• underlay probing bound to the physical network;
+• overlay verification through the tunnel;
+• restarting the Xray outbound without tearing down the TUN;
+• binding Xray’s sockets to a chosen Android Network;
+• transport variants taken from existing user profiles;
+• relay-fronted profiles;
+• Xray’s own observatory or balancer.
+If a requirement is not feasible with the current architecture, document the constraint, implement the closest verified alternative and continue; do not stall.
+Gate. No feature code before the audit file exists (the baseline build is the only exception). In AUDIT_ONLY mode, stop after the audit and the plan.
+5. Target architecture
+NetworkMonitor ──events──▶ SmartGlobalConnectivityEngine ◀──advice── RecoveryPlanner
+ (physical networks)         │            ▲                             ▲
+                             ▼            │                             │
+                        ProbeEngine ──▶ NationalInternetDetector        │
+                          │      └───▶ DomesticReachabilityDiscovery    │
+                          ▼                                             │
+        ServerReachabilityAssessor · TunnelHealthVerifier ──────────────┘
+                          ▼
+        FailureClassifier ─▶ FailureLog ─▶ ConnectivityStatusRepository ─▶ UI · Notification
+Seams: SmartEngine · SmartFailoverManager · XrayCoreAdapter · MaxNetVpnService · AutoVpnDiscoveryEngine
+Component
+Responsibility
+NetworkMonitor
+wraps NetworkCallback; tracks physical networks and their capabilities; emits debounced events
+ProbeEngine
+runs layered probes on the underlay or overlay plane under timeouts and budgets
+NationalInternetDetector
+turns probe evidence into a confidence-scored NetworkAssessment
+DomesticReachabilityDiscovery
+reports reachability of explicitly configured domestic endpoints, separately from international transport
+PathRegistry
+builds ConnectivityPaths from existing profiles, variants and relays, with trust levels
+ServerReachabilityAssessor
+climbs the per-path assessment ladder (DNS, TCP, TLS, handshake, data, stability)
+TunnelHealthVerifier
+verifies real traffic through the tunnel
+FailureClassifier and FailureLog
+structured, redacted failure records
+RecoveryPlanner
+pure policy: failure plus assessment gives an ordered list of recovery actions
+SmartGlobalConnectivityEngine
+owns the state machine, runs rounds, calls the existing SmartEngine, SmartFailoverManager and XrayCoreAdapter
+ConnectivityStatusRepository
+exposes typed state for the UI and the notification
+ConnectivityConfig
+versioned DataStore settings, defaults and flags
+Rules.
+• One engine instance, owned by the VPN service scope. If the audit shows the VPN service runs in a separate process, the engine lives in that process and exposes status through the project’s existing IPC with a small serializable payload.
+• Pure logic (classifier, scoring, backoff, planner, state machine) is plain Kotlin with no Android imports, so it is JVM-unit-testable. Android-bound parts sit behind interfaces (NetworkMonitor, ProbeRunner, CoreController, Clock) that tests replace with fakes.
+• The engine emits typed states and reason codes. User-visible strings exist only in the UI layer.
+• Extend, do not duplicate: where the audit shows SmartEngine or SmartFailoverManager already implements part of this, extend that class through a seam.
+6. Probing framework
+6.1 Two planes.
+• Underlay plane describes the ISP path. Probes MUST bypass the tunnel and use the physical network under assessment: obtain its Network from NetworkMonitor and use Network.getAllByName() for DNS and Network.getSocketFactory(), Network.bindSocket() or Network.openConnection() for TCP, TLS and HTTP. Verify on a device, or with debug logging plus documented reasoning, that these probes do not enter the TUN. If the routing makes this impossible, record it in the audit and cap confidence accordingly. Never use bindProcessToNetwork for this.
+• Overlay plane describes tunnel health. Probes traverse the tunnel exactly like ordinary app traffic, or go through the core’s measurement API.
+• Never mix the planes: a failed overlay probe says nothing about the underlay, and a successful underlay probe never proves the tunnel works.
+6.2 Probe layers. Every result records its layer and outcome.
+• L-IP: TCP connect to an IP literal (no DNS). It separates DNS problems from IP blocking.
+• L-DNS: resolve a registry hostname through the network’s resolver and classify the answer: public address, non-public address (private, loopback, link-local, CGNAT), empty, or error. A non-public answer for a public hostname signals DNS_TAMPERING_SUSPECTED and is never used as a connect target.
+• L-TLS: handshake with SNI using the platform trust store and hostname verification. Distinguish timeout, reset after ClientHello, alert and certificate failure.
+• L-HTTP: minimal HTTPS request (HEAD or GET to a 204 or tiny resource). Validate the status and the expected length or body marker. An unexpected redirect or body signals CAPTIVE_PORTAL_SUSPECTED or HTTP_BLOCKPAGE_SUSPECTED.
+• L-XFER: bounded transfer (default 256 KB) that measures throughput and mid-transfer stalls; budgeted, and used only to separate partial or throttled conditions from normal.
+Reuse the project’s HTTP client. If OkHttp is already present, its EventListener provides per-phase timings; otherwise use platform HttpsURLConnection and SSLSocket. Do not add a dependency for this.
+6.3 Probe Endpoint Registry.
+• Data-driven: an asset file (assets/connectivity/probe_endpoints.json) plus operator and user overrides in DataStore. Fields: id, role (INTERNATIONAL, DOMESTIC, RELAY_CHECK, TUNNEL_CHECK), host, port, ipLiterals, path, expectedStatus, optional expected length or body marker, providerGroup, weight, enabled.
+• International defaults: only endpoints published for connectivity checking (the public 204-style captive-portal check URLs used by major platforms), from at least three independent provider groups, plus the developer’s own endpoint if configured. List the shipped defaults in the final report; they must be replaceable without a code change.
+• Domestic defaults: empty. Domestic endpoints are added only by the operator or user (for example an endpoint on the operator’s own domestic-reachable host). Do not ship any government, bank, commercial or third-party-app endpoint.
+• Tunnel-check endpoints (overlay): the developer’s own 204 endpoint if configured; otherwise the same public check URLs.
+• Validate on load: HTTPS only for HTTP probes, no credentials in URLs, a bounded number of entries per role (default 8), well-formed hosts.
+6.4 Execution rules.
+• Single-flight: one assessment cycle at a time, triggers coalesced. At most 3 probes in parallel. Hard cycle budget (default 10 s). Each layer has its own timeout, enforced with withTimeout and cooperative cancellation.
+• Independence: conclusions about «international» as a whole require at least 2 distinct providerGroups. With fewer, cap confidence at 0.6 and say so in the evidence.
+• Minimum interval between full cycles (default 5 s); results stay valid for a TTL (default 20 s) unless the network changes.
+6.5 Budgets. At most 32 KB per cycle excluding L-XFER. L-XFER at most once per 30 minutes, and not on metered networks unless the planner needs it and the user allows it. Daily probe-data cap on metered networks (default 2 MB). Screen off: minimal cadence (default 5 min). A low-data mode in settings halves the cadence and disables L-XFER.
+6.6 Free signals (supporting evidence only, never a replacement for probes): NetworkCapabilities flags (INTERNET, VALIDATED, CAPTIVE_PORTAL, NOT_METERED), onBlockedStatusChanged, the background-data restriction status, and the VALIDATED flag of the VPN network itself as a weak overlay signal.
+6.7 Result model (illustrative; follow the project’s conventions):
+enum class Plane { UNDERLAY, OVERLAY }
+enum class ProbeLayer { IP, DNS, TLS, HTTP, XFER }
+
+data class ProbeResult(
+    val endpointId: String,
+    val plane: Plane,
+    val layer: ProbeLayer,
+    val ok: Boolean,
+    val latencyMs: Long?,
+    val bytes: Long?,
+    val failure: FailureCategory?,
+    val detail: String?        // always sanitized
+)
+7. NationalInternetDetector
+7.1 States. Required: NORMAL_INTERNATIONAL, RESTRICTED_INTERNATIONAL, DOMESTIC_ONLY_SUSPECTED, PARTIAL_INTERNATIONAL, NETWORK_UNSTABLE, NO_NETWORK, UNKNOWN. Optional additions: CAPTIVE_PORTAL_SUSPECTED, APP_BLOCKED_BY_OS.
+7.2 Evidence inputs. Link state; resolver response (any answer or NXDOMAIN counts as «resolver responds»); international L-IP, L-DNS, L-TLS and L-HTTP success per provider group; domestic reachability (YES, NO or NOT_TESTED); captive-portal signals; flap rate across cycles; optional throughput.
+7.3 Classification rules (evaluate in order; the first match wins):
+#
+Evidence
+State
+1
+no physical network with INTERNET capability
+NO_NETWORK
+2
+captive-portal flag or probe pattern
+CAPTIVE_PORTAL_SUSPECTED
+3
+the OS reports the app’s network as blocked
+APP_BLOCKED_BY_OS
+4
+results flip between cycles above the flap threshold
+NETWORK_UNSTABLE
+5
+all international layers succeed in at least 2 provider groups (and L-XFER, if run, is healthy)
+NORMAL_INTERNATIONAL
+6
+some provider groups or layers succeed while others fail, or L-XFER shows a collapse
+PARTIAL_INTERNATIONAL
+7
+all international probes fail, resolver responds, domestic reachability YES
+DOMESTIC_ONLY_SUSPECTED
+8
+all international probes fail, resolver responds, domestic NOT_TESTED or NO
+RESTRICTED_INTERNATIONAL
+9
+link claims INTERNET but nothing answers, not even the resolver
+NO_NETWORK (usable) with low confidence, or NETWORK_UNSTABLE if it was healthy within the last minute
+10
+insufficient evidence
+UNKNOWN
+One failed foreign server is never evidence of domestic-only connectivity. Rule 7 can only fire when domestic endpoints were actually configured and tested.
+7.4 Confidence. confidence = clamp(coverage × agreement × freshness): coverage is the number of independent provider groups tested divided by 3 (capped at 1), agreement is the share of probes that support the winning hypothesis, and freshness decays with the age of the evidence. «Suspected» states never exceed 0.9. The formula is a pure function with unit tests.
+7.5 Hysteresis. A state change requires 2 consecutive consistent cycles and a minimum dwell (default 10 s). Exceptions: NO_NETWORK from OS callbacks, and the return to NORMAL_INTERNATIONAL after verified tunnel traffic. The UI shows the stable state, not raw cycle results.
+7.6 Output and triggers. StateFlow<NetworkAssessment> with state, confidence, transport kind, domestic and international reachability, timestamp and sanitized evidence (probe IDs and outcomes, never user server addresses). Triggers: engine start; network change; tunnel-health degradation; adaptive periodic timer; user «recheck». Never from UI recomposition.
+8. DomesticReachabilityDiscovery
+• Purpose: report whether explicitly configured domestic endpoints are reachable, as evidence for classification and for deciding whether an explicitly configured relay is worth trying. It is not a proxy finder.
+• Sources: only operator- or user-configured DOMESTIC registry entries. With none configured the result is NOT_TESTED, not NO.
+• Output: DomesticReachability(state = YES | NO | NOT_TESTED, tested, reachable, measuredAt), always reported separately from international transport availability.
+• Prohibitions: no third-party domestic service as a relay, tunnel carrier or injection target; no assumption that HTTPS reachability means arbitrary traffic can pass; no inference from DNS alone.
+• If a domestic relay is needed, it is an explicitly authorized relay under the operator’s or user’s control (14).
+9. Path and server assessment
+9.1 ConnectivityPath. The unit of selection is a path, not a server: (profileRef, variant, relayRef?, networkBinding?, trust). Paths are derived only from existing data: user profiles (manual and subscription), user-supplied relays, and, with trust = UNTRUSTED, AutoVpnDiscoveryEngine candidates. Never invent servers, ports or transports that are not in the configuration.
+9.2 Assessment ladder (cheapest first; stop at the first failing rung):
+1. DNS (consult the per-profile resolved-address cache first).
+2. TCP connect to the path’s real address and port.
+3. TLS with the path’s real SNI, only where a standalone handshake is meaningful (skip it for protocols whose handshake is not plain TLS and rely on rung 4).
+4. Protocol handshake plus real data through the core, using the existing delay or measurement API if the bundled core exposes it, otherwise by bringing the path up as the real tunnel and verifying it.
+5. Stability window.
+Do not create a second TUN. A measurement-only core instance is allowed only if the bundled library supports it and the audit confirms it does not interfere with the TUN or protect().
+9.3 Economy. Assess only the candidates chosen by the planner, at most 5 per recovery round. Success cache TTL 60 s; failure state follows the circuit breaker (11.5).
+9.4 Tunnel verification. After connecting, the engine runs at least 2 overlay probes to independent tunnel-check endpoints (1 is allowed when only one is configured, with lower confidence). Success requires the expected status or body and a plausible latency. Then a stability window (default 30 s, at least 3 samples) must pass before the UI may show «اتصال امن برقرار شد»; until then it shows «در حال تأیید اتصال». A started core process is not success and an open TCP port is not success.
+9.5 Scoring. Normalized components in [0, 1]: success history (EWMA, half-life 30 min), median latency (log-scaled), consecutive-failure penalty with exponential decay, user-preference bonus (pinned or last-used), trust factor (UNTRUSTED paths are scaled down). Weights live in ConnectivityConfig; the function is pure and unit-tested.
+9.6 Privacy. Assessments and logs identify endpoints by endpointId (15.4), never by host, address, UUID or credentials.
+10. Failure classification
+10.1 Categories. Required: DNS_FAILURE, TCP_TIMEOUT, TCP_REFUSED, TLS_HANDSHAKE_FAILURE, VPN_HANDSHAKE_FAILURE, SERVER_UNREACHABLE, TRANSPORT_UNAVAILABLE, NETWORK_CHANGED, DOMESTIC_ONLY_SUSPECTED, INTERNATIONAL_ROUTE_UNAVAILABLE, RELAY_UNAVAILABLE, AUTHENTICATION_FAILURE, CONFIGURATION_ERROR, UNKNOWN_FAILURE. Strongly recommended additions: TCP_RESET, TLS_CERTIFICATE_INVALID, DNS_TAMPERING_SUSPECTED, CAPTIVE_PORTAL_SUSPECTED, HTTP_BLOCKPAGE_SUSPECTED, THROTTLING_SUSPECTED, CLOCK_SKEW_SUSPECTED, OS_NETWORK_BLOCKED, TUNNEL_NO_TRAFFIC (core running but overlay probes fail).
+10.2 Record. FailureRecord: wall-clock timestamp and monotonic time; transport kind; endpointId; category; retry count; recovery action taken; final result (RECOVERED, SWITCHED, GAVE_UP, PENDING); schema version. Never store passwords, private keys, tokens, UUIDs, full configs, subscription URLs or raw server addresses.
+10.3 Storage. An in-memory ring buffer (default 200 records) with optional app-private persistence capped by count and age (default 7 days). A user action clears it, and it is excluded from backup.
+10.4 Mapping. Implement a pure mapper with unit tests:
+Low-level signal
+Category
+UnknownHostException
+DNS_FAILURE (DNS_TAMPERING_SUSPECTED if the answer is non-public or an IP-literal probe disagrees)
+connect-phase SocketTimeoutException, NoRouteToHostException
+TCP_TIMEOUT
+ConnectException with connection refused
+TCP_REFUSED
+SocketException with connection reset (during connect or right after ClientHello)
+TCP_RESET
+SSLHandshakeException (protocol, alert, or timeout after TCP success)
+TLS_HANDSHAKE_FAILURE
+SSLPeerUnverifiedException, CertPathValidatorException
+TLS_CERTIFICATE_INVALID (never retried silently, never bypassed)
+unexpected redirect or body on a check URL
+CAPTIVE_PORTAL_SUSPECTED or HTTP_BLOCKPAGE_SUSPECTED
+the core reports a protocol-level reject
+VPN_HANDSHAKE_FAILURE, or AUTHENTICATION_FAILURE when the evidence is explicit
+unsupported or invalid profile or transport
+TRANSPORT_UNAVAILABLE or CONFIGURATION_ERROR
+Map the core’s own error signals from whatever the audit finds the bridge exposes, and redact before parsing or storing any core log text.
+10.5 Clock skew. Compare the device clock with the HTTP Date header of a successful probe. A skew above 90 s (configurable) yields CLOCK_SKEW_SUSPECTED, because TLS validation and some protocols fail with a wrong clock. Only warn; never change the clock; do not rotate servers because of it.
+11. Adaptive recovery and the engine state machine
+11.1 States. IDLE, ASSESSING, CONNECTING, VERIFYING, CONNECTED, DEGRADED, RECOVERING, LONG_OUTAGE_WAIT, TERMINAL_ERROR (an authentication or configuration problem that needs the user), STOPPED_BY_USER.
+From
+Event
+To
+Action
+IDLE
+user connects
+ASSESSING
+quick underlay assessment within budget
+ASSESSING
+usable or unknown network
+CONNECTING
+connect the selected path through the existing engine
+ASSESSING
+NO_NETWORK, captive portal, OS-blocked
+LONG_OUTAGE_WAIT
+surface the exact reason; wait for network events
+CONNECTING
+core up
+VERIFYING
+overlay probes (9.4)
+VERIFYING
+verified and stable
+CONNECTED
+show the secure-connection status
+CONNECTING, VERIFYING
+failed
+RECOVERING
+classify, record, plan
+CONNECTED
+health failures below threshold
+DEGRADED
+increase probe cadence
+DEGRADED
+recovered
+CONNECTED
+restore cadence
+CONNECTED, DEGRADED
+failures at threshold, or a network change that breaks the tunnel
+RECOVERING
+classify, plan
+RECOVERING
+path verified
+CONNECTED
+reset round counters
+RECOVERING
+candidates or attempts exhausted
+LONG_OUTAGE_WAIT
+report truthfully; slow polling
+RECOVERING
+authentication or configuration failure
+TERMINAL_ERROR
+stop rotating; tell the user
+LONG_OUTAGE_WAIT
+network event, user recheck, or poll success
+ASSESSING
+start a new round
+any state
+user disconnects
+STOPPED_BY_USER
+cancel all work, release callbacks
+11.2 A recovery round (bounded by roundBudgetMs and maxAttemptsPerRound):
+1. Identify and classify the failure (10).
+2. Decide whether it is transient: one quick retry on the same path after a short delay.
+3. Check whether the network changed; if so, reassess it first (12).
+4. Reassess the underlay (7). If international connectivity is broadly down, do not rotate servers; go to step 7.
+5. Test whether the current server is reachable (9.2).
+6. Evaluate alternatives in order: other user-supplied profiles of the same gateway (different port, transport or relay), then other user-configured servers by score, then runtime variants if enabled (13).
+7. Evaluate authorized relays if configured (14).
+8. Select a viable path, connect and verify real tunnel traffic (9.4). If verification fails, roll back to the previous best path or continue the round.
+9. Record the result; update scores and breakers; skip known-failed paths.
+10. If nothing is viable, enter LONG_OUTAGE_WAIT and report the real limitation.
+11.3 Recovery matrix.
+Failure
+Ordered actions
+Never
+NETWORK_CHANGED
+debounce; assess the new network; if one overlay probe passes do nothing; otherwise restart only the core outbound on the same path; then the normal ladder
+restarting on every callback; more than 1 restart per 10 s
+DNS_FAILURE
+one retry; the cached last-known-good address of the profile; the profile’s alternative address; next path
+adding DNS servers outside the existing DNS settings
+DNS_TAMPERING_SUSPECTED
+as for DNS_FAILURE, plus a diagnostics flag
+connecting to the non-public address
+TCP_TIMEOUT
+one retry from a new local port; if international connectivity is broadly failing treat the network as restricted; otherwise try other paths from existing data
+port scanning
+TCP_REFUSED
+mark the path failed with a TTL; next path
+hammering the same port
+TCP_RESET
+next variant that differs in transport, port or SNI from existing data; an allowed runtime variant
+retrying the identical config repeatedly
+TLS_HANDSHAKE_FAILURE
+check clock skew; next path
+disabling validation
+TLS_CERTIFICATE_INVALID
+stop on this path; notify; other paths
+bypassing validation or overriding pins
+VPN_HANDSHAKE_FAILURE
+check clock skew; one retry; next path
+rapid rotation
+AUTHENTICATION_FAILURE
+at most one confirming retry; mark the profile as needing attention; notify
+brute force; rotation storms
+TRANSPORT_UNAVAILABLE, CONFIGURATION_ERROR
+skip the path until the profile changes or the app updates
+mutating the user’s config
+INTERNATIONAL_ROUTE_UNAVAILABLE, DOMESTIC_ONLY_SUSPECTED
+evaluate relays; otherwise LONG_OUTAGE_WAIT with slow polling and automatic resume
+rotating servers
+RELAY_UNAVAILABLE
+mark the relay with a TTL; fall back to direct paths
+retry loops
+CLOCK_SKEW_SUSPECTED, CAPTIVE_PORTAL_SUSPECTED, OS_NETWORK_BLOCKED
+surface the exact cause; wait for the user or an OS event
+treating it as filtering
+THROTTLING_SUSPECTED
+keep the tunnel; try the next-best path in the background; switch only if it verifies better
+dropping a working tunnel
+UNKNOWN_FAILURE
+bounded retry; keep sanitized diagnostics
+unbounded retry
+11.4 Selection and user intent.
+• A user-pinned server is never replaced automatically unless allowAutoServerSwitch is ON; retries and variants of the pinned server are allowed.
+• UNTRUSTED paths (AutoVpnDiscoveryEngine) are used for automatic recovery only in Free VPN mode (if present) or when the user explicitly enabled auto-discovery. They are scored with the trust factor, never outrank user-owned profiles, and their probing stays within the existing discovery budgets.
+• SmartFailoverManager keeps ownership of «which profile next». The engine adds evidence gating, path candidates, backoff, breakers and verification.
+11.5 Backoff, circuit breaker, long outage.
+• Exponential backoff with jitter: base 2 s, factor 2, jitter ±20%, cap 5 min; reset after a verified connection that stays up through the stability window.
+• Per-path circuit breaker: opens after 3 consecutive failures for 5 min, doubling up to a 60 min cap; half-open allows one trial. Failures caused by network conditions (timeouts, resets, DNS) drop to half-open when the transport kind changes.
+• Round limits: at most 5 candidates, 6 attempts and 60 s per round.
+• Long-outage polling ladder: 30 s, 60 s, 2 min, 5 min, 10 min, then 15 min as the cap; immediate reassessment on a network event or user action; automatic resume when connectivity returns.
+11.6 No-leak invariants.
+• Prefer restarting only the Xray core or its outbounds and keeping the TUN descriptor open, so no packet leaves outside the tunnel during recovery. While the core is down, packets routed into the TUN are dropped, which acts as a kill switch, provided the TUN routes capture all traffic (verify in the audit).
+• If TUN parameters must change, prefer establishing the replacement interface before closing the old descriptor, verify the behavior on a device, and never leave two active TUNs.
+• Do not use allowBypass or per-app bypass as part of recovery.
+• Respect the existing kill-switch settings.
+11.7 Anti-loop guarantees. A global cap on engine-initiated restarts per window (default 6 per 10 min), after which the engine goes to LONG_OUTAGE_WAIT; a restart-storm guard persisted in DataStore with timestamps so repeated service restarts cannot loop; no recovery action may trigger another assessment without passing the debounce and rate limits.
+11.8 Integration. Define a narrow interface (for example ConnectivityAdvisor) consumed by SmartFailoverManager: given the latest failure and assessment it returns advice (retry, switch, wait, stop) with reason codes. SmartFailoverManager remains the executor of profile switching unless the audit shows a cleaner seam. If the engine throws or a flag disables it, the VPN keeps working in legacy mode (fail open to the old behavior; log a sanitized message).
+12. Multi-network support and network switching
+12.1 NetworkMonitor. A callbackFlow over registerNetworkCallback with a request for physical networks (NET_CAPABILITY_INTERNET and NET_CAPABILITY_NOT_VPN), plus the default-network callback if the audit finds it useful. Track the set of available networks and their capabilities. Emit conflated, debounced events (default debounce 800 ms). Unregister in awaitClose and on service stop. Do not use deprecated polling APIs (getActiveNetworkInfo, getAllNetworks, NetworkInfo).
+12.2 Event handling.
+Event
+Action
+the default physical network changes (A to B)
+classify as NETWORK_CHANGED; debounce; quick underlay assessment of B; if one overlay probe passes do nothing; otherwise restart the core outbound without rebuilding the TUN; at most 1 restart per 10 s
+the current network is lost with no replacement
+NO_NETWORK; keep the TUN; stop probing except OS signals; wait
+capabilities changed
+act only on meaningful differences (transport, VALIDATED, CAPTIVE_PORTAL, metered state); ignore bandwidth churn
+link properties changed
+act only if the addresses or DNS servers of the active network changed
+blocked status becomes true
+APP_BLOCKED_BY_OS; this is not a filtering verdict
+Failures observed on network A must not penalize paths on network B for network-dependent categories (breaker rule in 11.5).
+12.3 Underlying networks. If the audit shows that the VPN does not declare its underlying networks correctly, call VpnService.setUnderlyingNetworks() with the currently selected physical network whenever it changes, after verifying on a device that this does not regress behavior. Following the system default (null) is acceptable if the audit shows correct behavior.
+12.4 Binding Xray’s sockets. Investigate how Xray’s sockets are protected. Acceptable outcomes, in order: (1) sockets follow the system default network through the existing protect() path; (2) per-socket binding with Network.bindSocket() inside the existing protect hook, only if the bridge hands over the descriptor and the result is verified on a device; (3) not supported: report «network selection unavailable» in diagnostics. Do not use bindProcessToNetwork, which is process-wide.
+12.5 Multi-network assistance (optional, default OFF). If the active network is assessed RESTRICTED_INTERNATIONAL or DOMESTIC_ONLY_SUSPECTED and another physical network is already available and assessed better, prefer it when 12.4 (2) works; otherwise show a Persian hint. Never keep an extra network alive with requestNetwork, and never use mobile data, without the user’s opt-in.
+12.6 Scenarios to cover: Wi-Fi to mobile data; mobile data to Wi-Fi; Wi-Fi with a captive portal; both networks up with one restricted; airplane mode on and off; a flapping network (5 or more events in 10 s) producing no restart storm.
+13. Transport resilience
+• Inventory from the audit: the transports the bundled Xray build supports AND the config layer can represent. Use only those.
+• A path is usable only if the server supports it, the client supports it, the network allows it, the configuration is valid, and authentication and security remain intact.
+• Variant ladder per gateway: (1) the user’s profile unchanged; (2) other user-supplied profiles for the same gateway; (3) other user-configured servers; (4) runtime-derived variants only if allowRuntimeVariants is ON (default OFF), limited to options the app already exposes (for example mux, fragmentation or DNS strategy). Derived configs are runtime-only copies, validated by the bundled core’s config parser before use, and never persisted over the original.
+• Never try ports, transports or hosts that are not in the configuration. A port or transport change is not assumed to bypass filtering; it is a hypothesis that verification confirms or rejects.
+• WireGuard only if it is already integrated; otherwise out of scope.
+• Xray’s observatory or balancer may be used only if the bundled version supports it and the audit shows the config builder can enable it safely. App-level logic stays authoritative and the two must not run competing failover.
+• Every transport switch is logged (category, from, to, reason) in FailureLog.
+14. Authorized relay support
+Definition. Android MAXNET5G client → authorized reachable relay → user-owned international gateway → international internet.
+Requirements. The relay MUST be explicitly configured, under the operator’s or user’s control or explicitly authorized, authenticated, encrypted, able to forward the required transport, and have a genuine path to the gateway. Relay selection is based on measured reachability and failures are detected. Domestic websites and third-party services are never relays. If no relay or viable alternative exists, report the real limitation.
+Client modes (choose per the audit; no second engine):
+• A. Relay-fronted profile (preferred). The operator supplies an ordinary profile in an already-supported format whose server address is the relay. It is tagged as a relay path in the path model; no Xray config mutation.
+• A2. Address override for a transparent TCP forwarder. A runtime-derived variant equals the gateway profile with address and port replaced by the user-supplied relay address while every identity-bearing parameter is preserved. The effective TLS server name (and the WebSocket Host, if used) MUST remain the gateway’s, so certificate validation still targets the gateway. Never persist it over the original and never disable validation.
+• B. Explicit chain (conditional). Only if the audit proves the bundled Xray supports chaining and the config builder can generate it safely; runtime-only, validated by the core’s config parser.
+• C. Unsupported. Document the limitation.
+Data and secrets. An additive relay model (id, label, endpoint, transport kind, auth reference, enabled). Secrets go in the project’s existing secure storage or Android Keystore-backed encryption. Reject relay entries without authentication and encryption.
+Health. Two levels: RELAY_REACHABLE (TCP or TLS reachable) and RELAY_FORWARDING_OK (end-to-end overlay verification through the relay to the gateway succeeded). Only the second counts as usable. Failures yield RELAY_UNAVAILABLE with a TTL. A relay is not preferred over a working direct path unless the direct path is assessed failing or the user prefers it.
+UI. Show «از طریق مسیر واسط» only when a relay is configured and in use.
+Server-side deliverable: docs/connectivity/RELAY_SETUP.md with topologies (transparent TCP forwarder, Xray-based relay), requirements (authentication, encryption, firewall, health endpoint, logging policy), what the client expects, and an operations checklist. Placeholders only, no credentials. State that the operator is responsible for lawful use.
+Tests: a fake relay in JVM tests: relay unreachable; relay reachable but gateway unreachable; relay fully working.
+15. Security, privacy and leak prevention
+• 15.1 TLS. Platform trust store and hostname verification everywhere. Optional SPKI pinning for the developer’s own probe endpoint is allowed, with a backup pin and a documented rotation plan; default OFF. A pin or certificate failure yields TLS_CERTIFICATE_INVALID (possible interception) and is never ignored.
+• 15.2 DNS. While connected, application DNS goes through the tunnel path the app already configures. Underlay probes resolve only registry hostnames. Do not add new underlay resolutions of user hostnames: prefer cached addresses, and resolve the gateway hostname on the underlay only as part of establishing that path, as the core already does.
+• 15.3 IPv6. Audit the tunnel’s IPv6 handling. IPv6 traffic must be routed into the tunnel and handled, or explicitly blocked; document and test the result, and record it in the report.
+• 15.4 Identifiers and redaction. endpointId is a truncated HMAC-SHA-256 of host and port, keyed with a per-install random secret kept in secure storage. A unit-tested redaction utility removes UUIDs, keys, tokens, passwords, share-link URIs (vless, vmess, trojan and similar), subscription URLs, and the IP addresses and hostnames of user servers from any text before it reaches a log or diagnostic.
+• 15.5 Diagnostics export. Sanitized text, only by explicit user action, with a preview and a size cap. No automatic upload. A control to clear records.
+• 15.6 Storage and backup. New stores follow the project’s existing backup rules and are excluded from auto-backup wherever the project excludes similar data.
+• 15.7 Components. New components are not exported; no new intent filters; PendingIntents are immutable; no secrets on the clipboard.
+• 15.8 Relay authentication. Mandatory (14).
+• 15.9 Threat model (document in the final report): an ISP or DPI observer; device inspection; a malicious relay; tampered probe responses; DNS poisoning; captive portals. For each, state the mitigation implemented and the residual risk.
+16. MaxNetVpnService integration
+• Create the engine in the existing start path with scope SupervisorJob() + Dispatchers.Default, cancelled in onDestroy and on user disconnect; unregister every callback.
+• Single-TUN invariant (11.6). onRevoke() stops the engine and does not auto-reconnect.
+• Notification: update the text through the existing builder, only on a user-visible state change and at most every 2 s; no sensitive content.
+• Always-on and lockdown: detect with isAlwaysOn() and isLockdownEnabled() where the API level allows and adapt the hint in the advanced section (with an optional shortcut to the system VPN settings screen).
+• Doze and standby: no new alarms or wake locks; adaptive cadence; never start services from the background in ways the OS forbids.
+• Process death and restart: engine state is reconstructible; use the restart-storm guard (11.7).
+• Crash safety: engine orchestration runs under supervised handlers. An unexpected exception disables the engine for the session, logs a sanitized message and leaves the VPN running as before.
+• Thread safety: shared state lives in StateFlow or is confined to a single dispatcher; no blocking calls on the main thread.

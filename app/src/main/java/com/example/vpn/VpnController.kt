@@ -6,6 +6,17 @@ import com.example.core.autovpn.AutoFreeVpnManager
 import com.example.core.autovpn.AutoVpnCacheStore
 import com.example.core.autovpn.ConnectionOwnership
 import com.example.core.autovpn.VpnAppMode
+import com.example.core.resilience.ConnectivityPath
+import com.example.core.resilience.EndpointIdHasher
+import com.example.core.resilience.FailureClassifier
+import com.example.core.resilience.FailureRecord
+import com.example.core.resilience.PathRegistry
+import com.example.core.resilience.PathTrustLevel
+import com.example.core.resilience.PersianConnectivityStrings
+import com.example.core.resilience.ProbePlane
+import com.example.core.resilience.ResilienceJsonSerializer
+import com.example.core.resilience.ResilienceUiSnapshot
+import com.example.core.resilience.SmartGlobalConnectivityEngine
 import com.example.core.singbox.SingBoxCoreAdapter
 import com.example.core.xray.XrayCoreAdapter
 import com.example.core.xray.XrayNativeBridge
@@ -17,6 +28,7 @@ import com.example.domain.model.RoutingRuleItem
 import com.example.domain.model.ServerProfile
 import com.example.domain.model.ValidationResult
 import com.example.domain.model.VpnConnectionState
+import com.example.security.LogRedactor
 import com.v2ray.ang.service.TProxyService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -34,7 +46,7 @@ import kotlinx.coroutines.launch
  * native packet forwarding (`libhev-socks5-tunnel.so`), 9-stage connection state machine,
  * end-to-end HTTP 204 proxy verification, 60-second real traffic history,
  * exponential-backoff reconnection, Single-Engine Connection Ownership (`NONE` / `FREE` / `PERSONAL`),
- * and the Intelligent Auto Free VPN Manager.
+ * the Intelligent Auto Free VPN Manager, and the Smart Global Connectivity & National Internet Resilience Engine.
  */
 object VpnController {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -43,6 +55,9 @@ object VpnController {
     private val singBoxEngine: CoreEngine = SingBoxCoreAdapter()
 
     private var currentEngine: CoreEngine = xrayEngine
+
+    val connectivityEngine: SmartGlobalConnectivityEngine = SmartGlobalConnectivityEngine()
+    val resilienceState: StateFlow<ResilienceUiSnapshot> = connectivityEngine.uiSnapshot
 
     @Volatile
     private var _autoFreeVpnManager: AutoFreeVpnManager? = null
@@ -67,6 +82,19 @@ object VpnController {
         _ownershipState.value = ConnectionOwnership.NONE
         _activeFreeProfile.value = null
         _selectedVpnMode.value = VpnAppMode.FREE_VPN
+        activeAllocatedSocksPort = null
+        connectivityEngine.failureLog.clear()
+        connectivityEngine.circuitBreakerRegistry.resetAll()
+    }
+
+    fun syncResilienceSettings(context: Context? = activeContext, settings: AppSettings = activeSettings) {
+        if (context != null) {
+            connectivityEngine.initializeAssets(context)
+        }
+        connectivityEngine.updateConfig(ResilienceJsonSerializer.toConnectivityConfig(settings))
+        connectivityEngine.updateAuthorizedRelays(
+            ResilienceJsonSerializer.parseAuthorizedRelays(settings.authorizedRelaysJson)
+        )
     }
 
     private val _selectedVpnMode = MutableStateFlow(VpnAppMode.FREE_VPN)
@@ -97,6 +125,8 @@ object VpnController {
     private var activeProfile: ServerProfile? = null
     private var activeSettings: AppSettings = AppSettings()
     private var activeRules: List<RoutingRuleItem> = emptyList()
+    private var activeAllocatedSocksPort: Int? = null
+    private var activeConnectivityPath: ConnectivityPath? = null
     private var tunEstablished: Boolean = false
     private var tunForwarderRunning: Boolean = false
     private var lastVerifiedProxyLatencyMs: Long? = null
@@ -171,6 +201,7 @@ object VpnController {
         } else {
             ConnectionOwnership.PERSONAL
         },
+        selectedConnectivityPath: ConnectivityPath? = null,
         establishTunAndForwarder: suspend (Int) -> Boolean = { true },
         protectSocket: (Int) -> Boolean = { true },
         verifyConnectivity: Boolean = true,
@@ -181,11 +212,10 @@ object VpnController {
         healthMonitorJob?.cancel()
         statsCollectorJob?.cancel()
 
-        // Ensure any previously running session is stopped before starting a new one
+        // Stop any running engine process; keep activeAllocatedSocksPort so zero-TUN-teardown can reuse it
         if (_connectionState.value != VpnConnectionState.DISCONNECTED &&
             _connectionState.value != VpnConnectionState.PREPARING
         ) {
-            TProxyService.stopTun2Socks()
             currentEngine.stop()
         }
 
@@ -195,10 +225,24 @@ object VpnController {
         activeProfile = profile
         activeSettings = settings
         activeRules = rules
-        tunEstablished = false
-        tunForwarderRunning = false
         lastVerifiedProxyLatencyMs = null
         activeVerificationUrl = verificationUrl
+
+        syncResilienceSettings(activeContext, settings)
+
+        val trustLevel = if (ownership == ConnectionOwnership.FREE) {
+            PathTrustLevel.UNTRUSTED
+        } else {
+            PathTrustLevel.TRUSTED_USER
+        }
+        val activePath = selectedConnectivityPath ?: PathRegistry.buildDirectPath(profile, trustLevel)
+        activeConnectivityPath = activePath
+        val relays = ResilienceJsonSerializer.parseAuthorizedRelays(settings.authorizedRelaysJson)
+        val effectiveProfile = if (settings.resilienceMasterEnabled && activePath.viaRelayId != null) {
+            PathRegistry.applyPathOverrides(profile, activePath, relays)
+        } else {
+            profile
+        }
 
         _ownershipState.value = ownership
         if (ownership == ConnectionOwnership.FREE) {
@@ -210,12 +254,14 @@ object VpnController {
         setState(VpnConnectionState.PREPARING, onStateChanged)
         updateDiagnosticSnapshot(localPort = null, lastError = null)
 
-        val preValidation = selectedEngine.validateConfig(profile, settings, rules)
+        val preValidation = selectedEngine.validateConfig(effectiveProfile, settings, rules)
         if (!preValidation.isValid) {
+            val rawErr = preValidation.errors.joinToString("; ")
             val friendly = formatUserFriendlyError(
-                rawError = preValidation.errors.joinToString("; "),
+                rawError = rawErr,
                 languageCode = settings.languageCode
             )
+            recordResilienceFailure(effectiveProfile, activePath, rawErr, "PREPARING")
             _ownershipState.value = ConnectionOwnership.NONE
             setState(VpnConnectionState.ERROR, onStateChanged)
             onLog("ERROR", "VpnController", "Configuration invalid: $friendly")
@@ -227,6 +273,7 @@ object VpnController {
         if (initRes.isFailure) {
             val rawMsg = initRes.exceptionOrNull()?.message ?: "Failed to initialize Xray-core assets"
             val friendly = formatUserFriendlyError(rawMsg, settings.languageCode)
+            recordResilienceFailure(effectiveProfile, activePath, rawMsg, "INITIALIZE")
             _ownershipState.value = ConnectionOwnership.NONE
             setState(VpnConnectionState.ERROR, onStateChanged)
             onLog("ERROR", "VpnController", friendly)
@@ -238,16 +285,19 @@ object VpnController {
         updateDiagnosticSnapshot(localPort = null, lastError = null)
 
         val startResult = selectedEngine.start(
-            profile = profile,
+            profile = effectiveProfile,
             settings = settings,
             customRules = rules,
             protectSocket = protectSocket,
-            onLog = onLog
+            onLog = onLog,
+            preferredLocalSocksPort = activeAllocatedSocksPort
         )
 
         if (startResult.isFailure) {
             val err = startResult.exceptionOrNull() ?: IllegalStateException("Engine failed to start")
-            val friendly = formatUserFriendlyError(err.message ?: "Engine start failed", settings.languageCode)
+            val rawMsg = err.message ?: "Engine start failed"
+            val friendly = formatUserFriendlyError(rawMsg, settings.languageCode)
+            recordResilienceFailure(effectiveProfile, activePath, rawMsg, "STARTING_ENGINE")
             _ownershipState.value = ConnectionOwnership.NONE
             setState(VpnConnectionState.ERROR, onStateChanged)
             onLog("ERROR", "VpnController", "Engine start failed: $friendly")
@@ -256,6 +306,7 @@ object VpnController {
         }
 
         val localPort = startResult.getOrThrow()
+        activeAllocatedSocksPort = localPort
 
         // Stage: CONNECTING (establish TUN interface + start hev-socks5-tunnel packet forwarder)
         setState(VpnConnectionState.CONNECTING, onStateChanged)
@@ -275,6 +326,7 @@ object VpnController {
                 "TUN interface or packet forwarder failed to initialize",
                 settings.languageCode
             )
+            recordResilienceFailure(effectiveProfile, activePath, "TUN setup failed", "CONNECTING")
             setState(VpnConnectionState.ERROR, onStateChanged)
             onLog("ERROR", "VpnController", friendly)
             updateDiagnosticSnapshot(localPort = null, lastError = friendly)
@@ -299,6 +351,7 @@ object VpnController {
                     ?: "Proxy connectivity verification failed (HTTP 204 check timed out)"
                 val friendly = formatUserFriendlyError(rawVerifyErr, settings.languageCode)
                 onLog("ERROR", "VpnController", "Verification failed: $friendly")
+                recordResilienceFailure(effectiveProfile, activePath, rawVerifyErr, "VERIFYING")
                 TProxyService.stopTun2Socks()
                 selectedEngine.stop()
                 tunEstablished = false
@@ -310,6 +363,15 @@ object VpnController {
             }
 
             lastVerifiedProxyLatencyMs = verifyRes.getOrNull()
+            if (settings.resilienceMasterEnabled) {
+                val statsSnap = selectedEngine.getStatistics().value
+                connectivityEngine.verifyEstablishedTunnel(
+                    path = activePath,
+                    localSocksPort = localPort,
+                    rxBytesDelta = statsSnap.sessionDownloadBytes,
+                    txBytesDelta = statsSnap.sessionUploadBytes
+                )
+            }
             onLog(
                 "INFO",
                 "VpnController",
@@ -319,19 +381,54 @@ object VpnController {
 
         // Stage: CONNECTED (all checks passed!)
         selectedEngine.markConnected()
+        connectivityEngine.circuitBreakerRegistry.recordSuccess(activePath.pathId)
         if (ownership == ConnectionOwnership.FREE && lastVerifiedProxyLatencyMs != null) {
             _activeFreeProfile.value = profile.copy(lastLatencyMs = lastVerifiedProxyLatencyMs)
         }
         setState(VpnConnectionState.CONNECTED, onStateChanged)
+        val viaRelayTag = activePath.viaRelayId?.let { " [via AuthorizedRelay]" } ?: ""
         onLog(
             "INFO",
             "VpnController",
-            "Connected '${profile.remarks}' [${ownership.name}] via ${selectedEngine.getEngineVersion()} on 127.0.0.1:$localPort"
+            "Connected '${profile.remarks}' [${ownership.name}]$viaRelayTag via ${selectedEngine.getEngineVersion()} on 127.0.0.1:$localPort"
         )
         observeEngineTelemetry(selectedEngine)
         startHealthMonitor(selectedEngine, localPort, onLog)
         updateDiagnosticSnapshot(localPort = localPort, lastError = null)
         return Result.success(localPort)
+    }
+
+    private fun recordResilienceFailure(
+        profile: ServerProfile,
+        path: ConnectivityPath,
+        rawError: String,
+        stageLabel: String
+    ) {
+        if (!activeSettings.resilienceMasterEnabled) return
+        val category = FailureClassifier.classifyVpnCoreError(rawError)
+        val assessment = connectivityEngine.getLatestAssessment()
+        connectivityEngine.circuitBreakerRegistry.recordFailure(
+            pathId = path.pathId,
+            category = category,
+            transportKind = assessment.transportKind
+        )
+        val detail = LogRedactor.redactDiagnostics("[$stageLabel] $rawError", listOf(profile.credential))
+        connectivityEngine.failureLog.record(
+            FailureRecord(
+                timestampEpochMs = System.currentTimeMillis(),
+                networkType = assessment.transportKind,
+                nationalInternetState = assessment.state,
+                nationalStateConfidence = assessment.confidence,
+                domesticReachable = assessment.domesticReachability.state,
+                endpointId = EndpointIdHasher.hashEndpoint(profile.address, profile.port, path.transportVariant),
+                transport = path.transportVariant,
+                portBucket = EndpointIdHasher.portBucket(profile.port),
+                failureCategory = category,
+                rttMs = null,
+                recoveryActionTaken = stageLabel,
+                sanitizedDetail = detail
+            )
+        )
     }
 
     private fun setState(
@@ -407,6 +504,8 @@ object VpnController {
         TProxyService.stopTun2Socks()
         currentEngine.stop()
 
+        activeAllocatedSocksPort = null
+        activeConnectivityPath = null
         tunEstablished = false
         tunForwarderRunning = false
         lastVerifiedProxyLatencyMs = null
@@ -441,18 +540,28 @@ object VpnController {
                 "VpnController",
                 "Reconnecting '${profile.remarks}' (attempt $attempt/${backoffDelaysMs.size})…"
             )
-            TProxyService.stopTun2Socks()
+            // Stop only the engine process first; if it rebinds activeAllocatedSocksPort, TUN stays up
             currentEngine.stop()
 
+            val relays = ResilienceJsonSerializer.parseAuthorizedRelays(activeSettings.authorizedRelaysJson)
+            val path = activeConnectivityPath
+            val effectiveProfile = if (activeSettings.resilienceMasterEnabled && path?.viaRelayId != null) {
+                PathRegistry.applyPathOverrides(profile, path, relays)
+            } else {
+                profile
+            }
+
             val res = currentEngine.start(
-                profile = profile,
+                profile = effectiveProfile,
                 settings = activeSettings,
                 customRules = activeRules,
                 protectSocket = protectSocket,
-                onLog = onLog
+                onLog = onLog,
+                preferredLocalSocksPort = activeAllocatedSocksPort
             )
             if (res.isSuccess) {
                 val port = res.getOrThrow()
+                activeAllocatedSocksPort = port
                 val tunOk = runCatching { establishTunAndForwarder(port) }.getOrDefault(false)
                 val verifyOk = if (tunOk && verifyConnectivity) {
                     val v = currentEngine.verifyActiveConnection(activeVerificationUrl, 6000)
@@ -479,6 +588,7 @@ object VpnController {
 
         TProxyService.stopTun2Socks()
         currentEngine.stop()
+        activeAllocatedSocksPort = null
         tunEstablished = false
         tunForwarderRunning = false
         _ownershipState.value = ConnectionOwnership.NONE

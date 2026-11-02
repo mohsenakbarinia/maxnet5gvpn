@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "endpoints": [
+    {
+      "id": "intl_google_204",
+      "role": "INTERNATIONAL",
+      "providerGroup": "google",
+      "url": "https://www.gstatic.com/generate_204",
+      "host": "www.gstatic.com",
+      "port": 443,
+      "expectedHttpStatuses": [204],
+      "priority": 100
+    },
+    {
+      "id": "intl_cloudflare_204",
+      "role": "INTERNATIONAL",
+      "providerGroup": "cloudflare",
+      "url": "https://cp.cloudflare.com/generate_204",
+      "host": "cp.cloudflare.com",
+      "port": 443,
+      "expectedHttpStatuses": [204],
+      "priority": 95
+    },
+    {
+      "id": "intl_msft_connect",
+      "role": "INTERNATIONAL",
+      "providerGroup": "microsoft",
+      "url": "https://www.msftconnecttest.com/connecttest.txt",
+      "host": "www.msftconnecttest.com",
+      "port": 443,
+      "expectedHttpStatuses": [200],
+      "expectedBodyPrefix": "Microsoft Connect Test",
+      "priority": 90
+    },
+    {
+      "id": "intl_google_connectivity",
+      "role": "INTERNATIONAL",
+      "providerGroup": "google",
+      "url": "https://connectivitycheck.gstatic.com/generate_204",
+      "host": "connectivitycheck.gstatic.com",
+      "port": 443,
+      "expectedHttpStatuses": [204],
+      "priority": 85
+    },
+    {
+      "id": "tunnel_cloudflare_204",
+      "role": "TUNNEL_CHECK",
+      "providerGroup": "cloudflare",
+      "url": "https://cp.cloudflare.com/generate_204",
+      "host": "cp.cloudflare.com",
+      "port": 443,
+      "expectedHttpStatuses": [204],
+      "priority": 100
+    },
+    {
+      "id": "tunnel_google_204",
+      "role": "TUNNEL_CHECK",
+      "providerGroup": "google",
+      "url": "https://www.gstatic.com/generate_204",
+      "host": "www.gstatic.com",
+      "port": 443,
+      "expectedHttpStatuses": [204],
+      "priority": 95
+    },
+    {
+      "id": "tunnel_msft_connect",
+      "role": "TUNNEL_CHECK",
+      "providerGroup": "microsoft",
+      "url": "https://www.msftconnecttest.com/connecttest.txt",
+      "host": "www.msftconnecttest.com",
+      "port": 443,
+      "expectedHttpStatuses": [200],
+      "expectedBodyPrefix": "Microsoft Connect Test",
+      "priority": 90
+    }
+  ],
+  "domesticEndpoints": []
+}

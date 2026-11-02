@@ -202,18 +202,36 @@ class SmartFailoverManager(
             SmartEngine.recordServerFailure(failedProfile)
 
             try {
-                val candidates = getCandidates().filter {
+                val allCandidates = getCandidates()
+                val rawAlternatives = allCandidates.filter {
                     it.uniqueFingerprintKey() != failedProfile.uniqueFingerprintKey()
                 }
+                val candidates = if (settings.resilienceMasterEnabled) {
+                    val cbFiltered = rawAlternatives.filter { cand ->
+                        !VpnController.connectivityEngine.circuitBreakerRegistry.isOpen("direct_${cand.id}")
+                    }
+                    cbFiltered.ifEmpty { rawAlternatives }
+                } else {
+                    rawAlternatives
+                }
 
-                if (candidates.isEmpty()) {
-                    onLog("WARN", "SmartFailover", "No alternative server candidates available for failover.")
+                // If no direct alternative exists or resilience advisor has AuthorizedRelays configured, check relay path
+                val relays = if (settings.resilienceMasterEnabled && settings.relayFallbackEnabled) {
+                    com.example.core.resilience.ResilienceJsonSerializer
+                        .parseAuthorizedRelays(settings.authorizedRelaysJson)
+                        .filter { it.isEnabled && it.ownerAttested }
+                } else {
+                    emptyList()
+                }
+
+                if (candidates.isEmpty() && relays.isEmpty()) {
+                    onLog("WARN", "SmartFailover", "No alternative server candidates or authorized relays available for failover.")
                     _isRecovering.value = false
                     return@withLock false
                 }
 
                 val selection = SmartEngine.selectBestServer(
-                    candidates = candidates,
+                    candidates = candidates.ifEmpty { listOf(failedProfile) },
                     mode = settings.smartConnectionMode
                 )
 

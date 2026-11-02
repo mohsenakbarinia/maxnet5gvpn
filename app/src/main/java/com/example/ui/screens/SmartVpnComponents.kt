@@ -31,8 +31,10 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Public
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material.icons.filled.Warning
@@ -41,6 +43,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -48,10 +51,16 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -62,6 +71,13 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.core.resilience.AuthorizedRelay
+import com.example.core.resilience.DomesticReachability
+import com.example.core.resilience.NationalConnectivityState
+import com.example.core.resilience.PersianConnectivityStrings
+import com.example.core.resilience.RelayMode
+import com.example.core.resilience.ResilienceJsonSerializer
+import com.example.core.resilience.ResilienceUiSnapshot
 import com.example.core.security.SecurityCenter
 import com.example.core.security.SecurityAuditReport
 import com.example.core.smart.SmartSelectionResult
@@ -851,6 +867,663 @@ fun ConnectionHistoryDialog(
                 colors = ButtonDefaults.buttonColors(containerColor = CyanPrimary)
             ) {
                 Text(if (isFa) "بستن" else "Close", color = Color.Black, fontWeight = FontWeight.Bold)
+            }
+        }
+    )
+}
+
+/**
+ * National Internet Resilience & Smart Global Connectivity Card (Section 12):
+ * Displays evidence-based network classification, confidence score, domestic vs. international
+ * reachability, authorized relay badge («از طریق مسیر واسط»), and expandable failure diagnostics.
+ */
+@Composable
+fun NationalConnectivityResilienceCard(
+    snapshot: ResilienceUiSnapshot,
+    settings: AppSettings,
+    isFa: Boolean,
+    usePersian: Boolean,
+    onRunAssessment: () -> Unit,
+    onOpenRelayAndResilienceDialog: () -> Unit
+) {
+    var showFailureDrawer by remember { mutableStateOf(false) }
+
+    val stateColor = when (snapshot.connectivityState) {
+        NationalConnectivityState.NORMAL_INTERNATIONAL -> EmeraldAccent
+        NationalConnectivityState.PARTIAL_INTERNATIONAL,
+        NationalConnectivityState.RESTRICTED_INTERNATIONAL,
+        NationalConnectivityState.NETWORK_UNSTABLE,
+        NationalConnectivityState.CAPTIVE_PORTAL_SUSPECTED -> AmberWarning
+        NationalConnectivityState.DOMESTIC_ONLY_SUSPECTED,
+        NationalConnectivityState.NO_NETWORK,
+        NationalConnectivityState.APP_BLOCKED_BY_OS -> CoralError
+        NationalConnectivityState.UNKNOWN -> CyanPrimary
+    }
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("national_connectivity_resilience_card"),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = MidnightSurface),
+        border = BorderStroke(1.dp, stateColor.copy(alpha = 0.45f))
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Public,
+                        contentDescription = null,
+                        tint = stateColor,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Column {
+                        Text(
+                            text = if (isFa) "پایش هوشمند شبکه ملی و بین‌الملل" else "National & Global Network Resilience",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = snapshot.persianTitle,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = stateColor,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.testTag("resilience_persian_status_title")
+                        )
+                    }
+                }
+
+                if (snapshot.confidencePercent > 0) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = stateColor.copy(alpha = 0.14f),
+                        border = BorderStroke(1.dp, stateColor.copy(alpha = 0.4f))
+                    ) {
+                        Text(
+                            text = "${if (isFa) "اطمینان:" else "Conf:"} ${LocalizationHelper.formatDigits(snapshot.confidencePercent.toString(), usePersian)}%",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = stateColor,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                        )
+                    }
+                }
+            }
+
+            if (snapshot.isConnectedViaRelay) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = CyanPrimary.copy(alpha = 0.16f),
+                    border = BorderStroke(1.dp, CyanPrimary.copy(alpha = 0.45f)),
+                    modifier = Modifier.testTag("connected_via_relay_badge")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CheckCircle,
+                            contentDescription = null,
+                            tint = CyanPrimary,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "${PersianConnectivityStrings.CONNECTED_VIA_RELAY} (${PersianConnectivityStrings.VIA_RELAY_BADGE})",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = CyanPrimary,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // 3-Badge Reachability Row: International | Domestic | Transport
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                val intlColor = if (snapshot.internationalReachable) EmeraldAccent else CoralError
+                val intlText = if (snapshot.internationalReachable) {
+                    if (isFa) "بین‌الملل: در دسترس" else "Intl: Reachable"
+                } else {
+                    if (isFa) "بین‌الملل: محدود/نامشخص" else "Intl: Restricted"
+                }
+
+                val domColor = when (snapshot.domesticReachable) {
+                    com.example.core.resilience.DomesticReachabilityState.YES -> AmberWarning
+                    com.example.core.resilience.DomesticReachabilityState.NO -> CoralError
+                    com.example.core.resilience.DomesticReachabilityState.NOT_TESTED -> MaterialTheme.colorScheme.onSurfaceVariant
+                }
+                val domText = when (snapshot.domesticReachable) {
+                    com.example.core.resilience.DomesticReachabilityState.YES -> if (isFa) "داخلی: در دسترس" else "Domestic: YES"
+                    com.example.core.resilience.DomesticReachabilityState.NO -> if (isFa) "داخلی: قطع" else "Domestic: NO"
+                    com.example.core.resilience.DomesticReachabilityState.NOT_TESTED -> if (isFa) "داخلی: تست‌نشده" else "Domestic: N/A"
+                }
+
+                val netText = "Net: ${snapshot.activeNetworkType.name}"
+
+                listOf(
+                    intlText to intlColor,
+                    domText to domColor,
+                    netText to CyanPrimary
+                ).forEach { (label, tint) ->
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = tint.copy(alpha = 0.12f),
+                        border = BorderStroke(1.dp, tint.copy(alpha = 0.35f)),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text(
+                            text = label,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = tint,
+                            textAlign = TextAlign.Center,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(vertical = 5.dp, horizontal = 4.dp)
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                text = snapshot.persianSubtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedButton(
+                    onClick = onRunAssessment,
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = CyanPrimary),
+                    border = BorderStroke(1.dp, CyanPrimary.copy(alpha = 0.5f)),
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("run_resilience_assessment_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = if (isFa) "سنجش وضعیت شبکه" else "Assess Network",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                OutlinedButton(
+                    onClick = onOpenRelayAndResilienceDialog,
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = EmeraldAccent),
+                    border = BorderStroke(1.dp, EmeraldAccent.copy(alpha = 0.5f)),
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("open_relay_resilience_dialog_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Settings,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = if (isFa) "رله مجاز و پایداری" else "Relays & Resilience",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            if (snapshot.recentFailures.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(6.dp))
+                TextButton(
+                    onClick = { showFailureDrawer = !showFailureDrawer },
+                    modifier = Modifier.testTag("toggle_resilience_failure_drawer")
+                ) {
+                    Text(
+                        text = if (showFailureDrawer) {
+                            if (isFa) "بستن جزئیات فنی خطاها" else "Hide failure diagnostics"
+                        } else {
+                            if (isFa) "مشاهده جزئیات فنی (${snapshot.recentFailures.size} رویداد)" else "Show technical details (${snapshot.recentFailures.size})"
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = AmberWarning
+                    )
+                }
+
+                AnimatedVisibility(
+                    visible = showFailureDrawer,
+                    enter = fadeIn() + expandVertically(),
+                    exit = fadeOut() + shrinkVertically()
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = MidnightSurfaceVariant,
+                        border = BorderStroke(1.dp, MidnightBorder),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(10.dp)) {
+                            snapshot.recentFailures.take(5).forEach { rec ->
+                                Text(
+                                    text = "• [${rec.category.name}] (${rec.endpointId} / ${rec.portBucket}): ${rec.sanitizedDetail}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontFamily = JetBrainsMonoFontFamily,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(vertical = 2.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Dialog for configuring Authorized Relays (Mode A / Mode A2), custom domestic HTTPS probe
+ * endpoints, and National Internet Resilience switches.
+ */
+@Composable
+fun AuthorizedRelayAndResilienceDialog(
+    settings: AppSettings,
+    isFa: Boolean,
+    onDismiss: () -> Unit,
+    onToggleMasterResilience: (Boolean) -> Unit,
+    onToggleLowDataMode: (Boolean) -> Unit,
+    onToggleRuntimeVariants: (Boolean) -> Unit,
+    onToggleRelayFallback: (Boolean) -> Unit,
+    onAddAuthorizedRelay: (AuthorizedRelay) -> Unit,
+    onRemoveAuthorizedRelay: (String) -> Unit,
+    onAddCustomDomesticEndpoint: (String) -> Unit,
+    onRemoveCustomDomesticEndpoint: (String) -> Unit
+) {
+    val configuredRelays = remember(settings.authorizedRelaysJson) {
+        ResilienceJsonSerializer.parseAuthorizedRelays(settings.authorizedRelaysJson)
+    }
+    var relayName by remember { mutableStateOf("") }
+    var relayAddress by remember { mutableStateOf("") }
+    var relayPortText by remember { mutableStateOf("443") }
+    var ownerAttested by remember { mutableStateOf(false) }
+    var domesticUrlInput by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        modifier = Modifier.testTag("authorized_relay_resilience_dialog"),
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Public, contentDescription = null, tint = CyanPrimary)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = if (isFa) "پایداری شبکه ملی و رله‌های مجاز" else "National Resilience & Authorized Relays",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        },
+        text = {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 440.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                item {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = if (isFa) "موتور هوشمند پایداری اینترنت ملی" else "Master Resilience Engine",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = if (isFa) "تشخیص وضعیت شبکه، بازیابی چندمسیره و مدار قطع‌کننده"
+                                else "Multi-signal network detection, path recovery & circuit breakers.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = settings.resilienceMasterEnabled,
+                            onCheckedChange = onToggleMasterResilience,
+                            modifier = Modifier.testTag("toggle_master_resilience")
+                        )
+                    }
+                }
+
+                item {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = if (isFa) "حالت کم‌مصرف کاوش شبکه (Low-Data)" else "Low-Data Probing Mode",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = if (isFa) "محدودسازی حجم کاوش به کمتر از ۲۵۶ کیلوبایت در ساعت"
+                                else "Caps background probe budget on metered cellular networks.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = settings.lowDataProbingMode,
+                            onCheckedChange = onToggleLowDataMode,
+                            modifier = Modifier.testTag("toggle_low_data_probing")
+                        )
+                    }
+                }
+
+                item {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = if (isFa) "بهینه‌سازی تطبیقی uTLS / ALPN در حافظه" else "Adaptive Runtime Transport Variants",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = if (isFa) "امتحان اثرانگشت‌های TLS جایگزین بدون تغییر پروفایل ذخیره‌شده"
+                                else "Tries compatible ALPN/uTLS variants in memory without altering Room DB.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = settings.allowRuntimeTransportVariants,
+                            onCheckedChange = onToggleRuntimeVariants,
+                            modifier = Modifier.testTag("toggle_runtime_variants")
+                        )
+                    }
+                }
+
+                item {
+                    HorizontalDivider(color = MidnightBorder)
+                }
+
+                // Authorized Relays Section (Mode A2)
+                item {
+                    Text(
+                        text = if (isFa) "رله‌های واسط مجاز (Authorized Relays - Mode A2)" else "Authorized Relays (Mode A2)",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = CyanPrimary
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = if (isFa) {
+                            "فقط سرورهای واسطی را وارد کنید که تحت مالکیت یا مجوز مستقیم شما هستند و ترافیک TLS/TCP را به سرور بین‌المللی شما فوروارد می‌کنند."
+                        } else {
+                            "Only add relay hosts owned or explicitly authorized by you that forward TCP/TLS to your international gateway."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                items(configuredRelays, key = { it.id }) { relay ->
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = MidnightSurfaceVariant,
+                        border = BorderStroke(1.dp, MidnightBorder),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 10.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = relay.name,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "${relay.address}:${relay.port} • ${relay.mode.name}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontFamily = JetBrainsMonoFontFamily,
+                                    color = CyanPrimary
+                                )
+                            }
+                            IconButton(
+                                onClick = { onRemoveAuthorizedRelay(relay.id) },
+                                modifier = Modifier.size(28.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Delete,
+                                    contentDescription = "Remove relay",
+                                    tint = CoralError,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                item {
+                    OutlinedTextField(
+                        value = relayName,
+                        onValueChange = { relayName = it },
+                        label = { Text(if (isFa) "نام رله مجاز" else "Relay Name") },
+                        singleLine = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("relay_name_input")
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = relayAddress,
+                            onValueChange = { relayAddress = it },
+                            label = { Text(if (isFa) "آدرس IP یا دامنه رله" else "Relay Host / IP") },
+                            singleLine = true,
+                            modifier = Modifier
+                                .weight(2f)
+                                .testTag("relay_address_input")
+                        )
+                        OutlinedTextField(
+                            value = relayPortText,
+                            onValueChange = { relayPortText = it },
+                            label = { Text(if (isFa) "پورت" else "Port") },
+                            singleLine = true,
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("relay_port_input")
+                        )
+                    }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { ownerAttested = !ownerAttested }
+                            .padding(vertical = 4.dp)
+                    ) {
+                        Checkbox(
+                            checked = ownerAttested,
+                            onCheckedChange = { ownerAttested = it },
+                            modifier = Modifier.testTag("relay_owner_attested_checkbox")
+                        )
+                        Text(
+                            text = if (isFa) "تأیید می‌کنم این رله تحت مالکیت یا مجوز مستقیم من است"
+                            else "I attest this relay is owned or explicitly authorized by me",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    Button(
+                        onClick = {
+                            val port = relayPortText.trim().toIntOrNull() ?: 443
+                            if (relayAddress.isNotBlank() && port in 1..65535 && ownerAttested) {
+                                val id = "relay_${System.currentTimeMillis()}"
+                                onAddAuthorizedRelay(
+                                    AuthorizedRelay(
+                                        id = id,
+                                        name = relayName.trim().ifEmpty { "${relayAddress.trim()}:$port" },
+                                        host = relayAddress.trim(),
+                                        port = port,
+                                        mode = RelayMode.MODE_A2_TRAFFIC_FORWARDER,
+                                        enabled = true,
+                                        ownerAttested = true
+                                    )
+                                )
+                                relayName = ""
+                                relayAddress = ""
+                                relayPortText = "443"
+                                ownerAttested = false
+                            }
+                        },
+                        enabled = relayAddress.isNotBlank() && ownerAttested,
+                        colors = ButtonDefaults.buttonColors(containerColor = EmeraldAccent),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("add_authorized_relay_button")
+                    ) {
+                        Text(
+                            text = if (isFa) "افزودن رله مجاز" else "Add Authorized Relay",
+                            color = Color.Black,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+
+                item {
+                    HorizontalDivider(color = MidnightBorder)
+                }
+
+                // Custom Domestic Probe Endpoints Section
+                item {
+                    Text(
+                        text = if (isFa) "نقاط سنجش داخلی مجاز (فقط تشخیصی - HTTPS)" else "Custom Domestic HTTPS Probe Endpoints (Diagnostic Only)",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = AmberWarning
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = if (isFa) {
+                            "این آدرس‌ها صرفاً برای تشخیص وضعیت «فقط شبکه داخلی» استفاده می‌شوند و هرگز به عنوان پروکسی یا رله استفاده نمی‌گردند."
+                        } else {
+                            "Used strictly to distinguish domestic-only connectivity from total network loss; never used for traffic tunneling."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                items(settings.customDomesticProbeUrls.toList(), key = { it }) { domUrl ->
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = MidnightSurfaceVariant,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = domUrl,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontFamily = JetBrainsMonoFontFamily,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                            IconButton(
+                                onClick = { onRemoveCustomDomesticEndpoint(domUrl) },
+                                modifier = Modifier.size(24.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Delete,
+                                    contentDescription = "Remove endpoint",
+                                    tint = CoralError,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                item {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedTextField(
+                            value = domesticUrlInput,
+                            onValueChange = { domesticUrlInput = it },
+                            label = { Text("https://...") },
+                            singleLine = true,
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("custom_domestic_url_input")
+                        )
+                        OutlinedButton(
+                            onClick = {
+                                if (domesticUrlInput.isNotBlank()) {
+                                    onAddCustomDomesticEndpoint(domesticUrlInput.trim())
+                                    domesticUrlInput = ""
+                                }
+                            },
+                            modifier = Modifier.testTag("add_custom_domestic_url_button")
+                        ) {
+                            Text(if (isFa) "افزودن" else "Add")
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onDismiss,
+                colors = ButtonDefaults.buttonColors(containerColor = CyanPrimary)
+            ) {
+                Text(if (isFa) "بستن" else "Done", color = Color.Black, fontWeight = FontWeight.Bold)
             }
         }
     )

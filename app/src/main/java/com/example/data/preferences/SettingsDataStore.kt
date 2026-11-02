@@ -53,6 +53,13 @@ class SettingsDataStore(private val context: Context) {
         val DNS_LEAK_PROTECTION = booleanPreferencesKey("dns_leak_protection")
         val IPV6_LEAK_PROTECTION = booleanPreferencesKey("ipv6_leak_protection")
         val SECURE_DNS_PROVIDER = stringPreferencesKey("secure_dns_provider")
+        val RESILIENCE_MASTER_ENABLED = booleanPreferencesKey("resilience_master_enabled")
+        val LOW_DATA_PROBING_MODE = booleanPreferencesKey("low_data_probing_mode")
+        val ALLOW_RUNTIME_VARIANTS = booleanPreferencesKey("allow_runtime_transport_variants")
+        val MULTI_NETWORK_ASSIST = booleanPreferencesKey("multi_network_assist_enabled")
+        val RELAY_FALLBACK_ENABLED = booleanPreferencesKey("relay_fallback_enabled")
+        val CUSTOM_DOMESTIC_PROBE_URLS = stringSetPreferencesKey("custom_domestic_probe_urls")
+        val AUTHORIZED_RELAYS_JSON = stringPreferencesKey("authorized_relays_json")
     }
 
     val settingsFlow: Flow<AppSettings> = context.dataStore.data.map { prefs ->
@@ -93,7 +100,14 @@ class SettingsDataStore(private val context: Context) {
             killSwitchEnabled = prefs[Keys.KILL_SWITCH_ENABLED] ?: false,
             dnsLeakProtection = prefs[Keys.DNS_LEAK_PROTECTION] ?: true,
             ipv6LeakProtection = prefs[Keys.IPV6_LEAK_PROTECTION] ?: true,
-            secureDnsProvider = prefs[Keys.SECURE_DNS_PROVIDER] ?: "Cloudflare"
+            secureDnsProvider = prefs[Keys.SECURE_DNS_PROVIDER] ?: "Cloudflare",
+            resilienceMasterEnabled = prefs[Keys.RESILIENCE_MASTER_ENABLED] ?: true,
+            lowDataProbingMode = prefs[Keys.LOW_DATA_PROBING_MODE] ?: false,
+            allowRuntimeTransportVariants = prefs[Keys.ALLOW_RUNTIME_VARIANTS] ?: false,
+            multiNetworkAssistEnabled = prefs[Keys.MULTI_NETWORK_ASSIST] ?: false,
+            relayFallbackEnabled = prefs[Keys.RELAY_FALLBACK_ENABLED] ?: true,
+            customDomesticProbeUrls = prefs[Keys.CUSTOM_DOMESTIC_PROBE_URLS] ?: emptySet(),
+            authorizedRelaysJson = prefs[Keys.AUTHORIZED_RELAYS_JSON] ?: "[]"
         )
     }
 
@@ -128,7 +142,21 @@ class SettingsDataStore(private val context: Context) {
                 autoReconnect = prefs[Keys.AUTO_RECONNECT] ?: true,
                 connectOnBoot = prefs[Keys.CONNECT_ON_BOOT] ?: false,
                 onboardingCompleted = prefs[Keys.ONBOARDING_COMPLETED] ?: true,
-                profileSortMode = prefs[Keys.PROFILE_SORT_MODE] ?: "DEFAULT"
+                profileSortMode = prefs[Keys.PROFILE_SORT_MODE] ?: "DEFAULT",
+                smartConnectionMode = com.example.domain.model.SmartConnectionMode.fromId(prefs[Keys.SMART_CONNECTION_MODE]),
+                smartConnectEnabled = prefs[Keys.SMART_CONNECT_ENABLED] ?: true,
+                autoFailoverEnabled = prefs[Keys.AUTO_FAILOVER_ENABLED] ?: true,
+                killSwitchEnabled = prefs[Keys.KILL_SWITCH_ENABLED] ?: false,
+                dnsLeakProtection = prefs[Keys.DNS_LEAK_PROTECTION] ?: true,
+                ipv6LeakProtection = prefs[Keys.IPV6_LEAK_PROTECTION] ?: true,
+                secureDnsProvider = prefs[Keys.SECURE_DNS_PROVIDER] ?: "Cloudflare",
+                resilienceMasterEnabled = prefs[Keys.RESILIENCE_MASTER_ENABLED] ?: true,
+                lowDataProbingMode = prefs[Keys.LOW_DATA_PROBING_MODE] ?: false,
+                allowRuntimeTransportVariants = prefs[Keys.ALLOW_RUNTIME_VARIANTS] ?: false,
+                multiNetworkAssistEnabled = prefs[Keys.MULTI_NETWORK_ASSIST] ?: false,
+                relayFallbackEnabled = prefs[Keys.RELAY_FALLBACK_ENABLED] ?: true,
+                customDomesticProbeUrls = prefs[Keys.CUSTOM_DOMESTIC_PROBE_URLS] ?: emptySet(),
+                authorizedRelaysJson = prefs[Keys.AUTHORIZED_RELAYS_JSON] ?: "[]"
             )
             val updated = transform(current)
             if (updated.selectedProfileId != null) prefs[Keys.SELECTED_PROFILE_ID] = updated.selectedProfileId
@@ -161,6 +189,13 @@ class SettingsDataStore(private val context: Context) {
             prefs[Keys.DNS_LEAK_PROTECTION] = updated.dnsLeakProtection
             prefs[Keys.IPV6_LEAK_PROTECTION] = updated.ipv6LeakProtection
             prefs[Keys.SECURE_DNS_PROVIDER] = updated.secureDnsProvider
+            prefs[Keys.RESILIENCE_MASTER_ENABLED] = updated.resilienceMasterEnabled
+            prefs[Keys.LOW_DATA_PROBING_MODE] = updated.lowDataProbingMode
+            prefs[Keys.ALLOW_RUNTIME_VARIANTS] = updated.allowRuntimeTransportVariants
+            prefs[Keys.MULTI_NETWORK_ASSIST] = updated.multiNetworkAssistEnabled
+            prefs[Keys.RELAY_FALLBACK_ENABLED] = updated.relayFallbackEnabled
+            prefs[Keys.CUSTOM_DOMESTIC_PROBE_URLS] = updated.customDomesticProbeUrls
+            prefs[Keys.AUTHORIZED_RELAYS_JSON] = updated.authorizedRelaysJson
         }
     }
 }
