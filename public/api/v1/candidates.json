@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "generated_at_epoch": 1794047804,
+  "generated_at_epoch": 1794070028,
   "generated_by": "MAXNET5G Lightweight Auto-VPN Collector",
   "supported_protocols": [
     "VLESS",
@@ -12,19 +12,25 @@
     {
       "protocol": "TROJAN",
       "uri": "trojan://0ab6c98dae3b48e8b9c4a776b6c9c19a@66.163.112.121:443?security=tls&sni=www.unlockyourfuturefindyourperfectcareer.com#%F0%9F%87%BA%F0%9F%87%B8US-66.163.112.121-0159",
-      "latency_ms": 3,
+      "latency_ms": 2,
       "network_compatibility": 0.92
     },
     {
       "protocol": "TROJAN",
       "uri": "trojan://0ab6c98dae3b48e8b9c4a776b6c9c19a@66.163.112.13:443?security=tls&sni=blog.unlockyourfuturefindyourperfectcareer.com#%F0%9F%87%BA%F0%9F%87%B8US-66.163.112.13-0182",
-      "latency_ms": 6,
+      "latency_ms": 3,
       "network_compatibility": 0.92
     },
     {
       "protocol": "TROJAN",
       "uri": "trojan://0ab6c98dae3b48e8b9c4a776b6c9c19a@167.88.61.175:443?security=tls&sni=blog.browseseniorrolesandenhanceyourcareertoday.com#%F0%9F%87%BA%F0%9F%87%B8US-167.88.61.175-0139",
-      "latency_ms": 26,
+      "latency_ms": 18,
+      "network_compatibility": 0.92
+    },
+    {
+      "protocol": "TROJAN",
+      "uri": "trojan://0ab6c98dae3b48e8b9c4a776b6c9c19a@66.163.114.132:443?security=tls&sni=courses.findconnectwithemployersandbuildprofessionalnetwork.com#%F0%9F%87%BA%F0%9F%87%B8US-66.163.114.132-0276",
+      "latency_ms": 29,
       "network_compatibility": 0.92
     },
     {
@@ -35,14 +41,26 @@
     },
     {
       "protocol": "TROJAN",
-      "uri": "trojan://0ab6c98dae3b48e8b9c4a776b6c9c19a@66.163.114.132:443?security=tls&sni=courses.findconnectwithemployersandbuildprofessionalnetwork.com#%F0%9F%87%BA%F0%9F%87%B8US-66.163.114.132-0276",
-      "latency_ms": 30,
+      "uri": "trojan://f0eb8c92ce8946aaba856569cff1a16b@resources.findlocaljobnetworkandbuildcommunityconnections.com:443?security=tls&sni=resources.findlocaljobnetworkandbuildcommunityconnections.com#%F0%9F%87%BA%F0%9F%87%B8US-216.106.186.33-0232",
+      "latency_ms": 43,
       "network_compatibility": 0.92
     },
     {
       "protocol": "TROJAN",
       "uri": "trojan://0ab6c98dae3b48e8b9c4a776b6c9c19a@169.197.140.218:443?security=tls&sni=learn.discoverfreshgraduatejobsstartyourprofessionaljourney.com#%F0%9F%87%BA%F0%9F%87%B8US-169.197.140.218-0132",
-      "latency_ms": 51,
+      "latency_ms": 50,
+      "network_compatibility": 0.92
+    },
+    {
+      "protocol": "TROJAN",
+      "uri": "trojan://0ab6c98dae3b48e8b9c4a776b6c9c19a@216.152.147.93:443?security=tls&sni=connectingpeoplewithgreatjobs.com#%F0%9F%87%A8%F0%9F%87%A6CA-216.152.147.93-0219",
+      "latency_ms": 60,
+      "network_compatibility": 0.92
+    },
+    {
+      "protocol": "TROJAN",
+      "uri": "trojan://0ab6c98dae3b48e8b9c4a776b6c9c19a@216.152.147.79:443?security=tls&sni=blog.connectingpeoplewithgreatjobs.com#%F0%9F%87%A8%F0%9F%87%A6CA-216.152.147.79-0211",
+      "latency_ms": 60,
       "network_compatibility": 0.92
     },
     {
@@ -59,49 +77,31 @@
     },
     {
       "protocol": "TROJAN",
-      "uri": "trojan://0ab6c98dae3b48e8b9c4a776b6c9c19a@170.101.101.67:443?security=tls&sni=courses.explorecreativejobsandenhanceyourcareerportfolio.com#%F0%9F%87%BA%F0%9F%87%B8US-170.101.101.67-0241",
-      "latency_ms": 61,
-      "network_compatibility": 0.92
-    },
-    {
-      "protocol": "TROJAN",
-      "uri": "trojan://0ab6c98dae3b48e8b9c4a776b6c9c19a@216.152.147.93:443?security=tls&sni=connectingpeoplewithgreatjobs.com#%F0%9F%87%A8%F0%9F%87%A6CA-216.152.147.93-0219",
-      "latency_ms": 61,
-      "network_compatibility": 0.92
-    },
-    {
-      "protocol": "TROJAN",
-      "uri": "trojan://0ab6c98dae3b48e8b9c4a776b6c9c19a@216.152.147.79:443?security=tls&sni=blog.connectingpeoplewithgreatjobs.com#%F0%9F%87%A8%F0%9F%87%A6CA-216.152.147.79-0211",
-      "latency_ms": 62,
-      "network_compatibility": 0.92
-    },
-    {
-      "protocol": "TROJAN",
       "uri": "trojan://0ab6c98dae3b48e8b9c4a776b6c9c19a@216.152.147.201:443?security=tls&sni=resources.connectingpeoplewithgreatjobs.com#%F0%9F%87%A8%F0%9F%87%A6CA-216.152.147.201-2492",
-      "latency_ms": 62,
+      "latency_ms": 60,
       "network_compatibility": 0.92
     },
     {
       "protocol": "TROJAN",
-      "uri": "trojan://f0eb8c92ce8946aaba856569cff1a16b@resources.findlocaljobnetworkandbuildcommunityconnections.com:443?security=tls&sni=resources.findlocaljobnetworkandbuildcommunityconnections.com#%F0%9F%87%BA%F0%9F%87%B8US-216.106.186.33-0232",
-      "latency_ms": 96,
+      "uri": "trojan://0ab6c98dae3b48e8b9c4a776b6c9c19a@170.101.101.67:443?security=tls&sni=courses.explorecreativejobsandenhanceyourcareerportfolio.com#%F0%9F%87%BA%F0%9F%87%B8US-170.101.101.67-0241",
+      "latency_ms": 63,
+      "network_compatibility": 0.92
+    },
+    {
+      "protocol": "TROJAN",
+      "uri": "trojan://5t6i121em5lkmsmk@ca001.zestapp778.com:46977?security=tls&sni=ca001.zestapp778.com#%F0%9F%87%A8%F0%9F%87%A6CA-149.248.50.252-0521",
+      "latency_ms": 78,
       "network_compatibility": 0.92
     },
     {
       "protocol": "TROJAN",
       "uri": "trojan://5t6i121em5lkmsmk@us001.zestapp778.com:57277?security=tls&sni=us001.zestapp778.com#%F0%9F%87%BA%F0%9F%87%B8US-38.60.157.143-0226",
-      "latency_ms": 108,
+      "latency_ms": 79,
       "network_compatibility": 0.92
     },
     {
       "protocol": "TROJAN",
       "uri": "trojan://0ab6c98dae3b48e8b9c4a776b6c9c19a@193.108.119.193:443?security=tls&sni=resources.iloverussia2026.com#%F0%9F%87%A9%F0%9F%87%AADE-193.108.119.193-2505",
-      "latency_ms": 134,
-      "network_compatibility": 0.92
-    },
-    {
-      "protocol": "TROJAN",
-      "uri": "trojan://0ab6c98dae3b48e8b9c4a776b6c9c19a@193.108.119.15:443?security=tls&sni=courses.iloverussia2026.com#%F0%9F%87%A9%F0%9F%87%AADE-193.108.119.15-0175",
       "latency_ms": 134,
       "network_compatibility": 0.92
     },
@@ -114,37 +114,37 @@
     {
       "protocol": "TROJAN",
       "uri": "trojan://0ab6c98dae3b48e8b9c4a776b6c9c19a@193.108.119.96:443?security=tls&sni=learn.iloverussia2026.com#%F0%9F%87%A9%F0%9F%87%AADE-193.108.119.96-0111",
-      "latency_ms": 135,
+      "latency_ms": 134,
+      "network_compatibility": 0.92
+    },
+    {
+      "protocol": "TROJAN",
+      "uri": "trojan://0ab6c98dae3b48e8b9c4a776b6c9c19a@193.108.119.15:443?security=tls&sni=courses.iloverussia2026.com#%F0%9F%87%A9%F0%9F%87%AADE-193.108.119.15-0175",
+      "latency_ms": 134,
       "network_compatibility": 0.92
     },
     {
       "protocol": "TROJAN",
       "uri": "trojan://0ab6c98dae3b48e8b9c4a776b6c9c19a@64.176.7.205:443?security=tls&sni=advanceyouremploymentskillsandcareerdevelopmenthub.com#%F0%9F%87%A8%F0%9F%87%B1CL-64.176.7.205-0200",
-      "latency_ms": 138,
+      "latency_ms": 135,
       "network_compatibility": 0.92
     },
     {
       "protocol": "TROJAN",
-      "uri": "trojan://5t6i121em5lkmsmk@ca001.zestapp778.com:46977?security=tls&sni=ca001.zestapp778.com#%F0%9F%87%A8%F0%9F%87%A6CA-149.248.50.252-0521",
-      "latency_ms": 142,
-      "network_compatibility": 0.92
-    },
-    {
-      "protocol": "TROJAN",
-      "uri": "trojan://0ab6c98dae3b48e8b9c4a776b6c9c19a@45.63.30.142:443?security=tls&sni=connectwithemployerstohireyouridealteam.com#%F0%9F%87%A6%F0%9F%87%BAAU-45.63.30.142-0221",
+      "uri": "trojan://0ab6c98dae3b48e8b9c4a776b6c9c19a@70.34.207.14:443?security=tls&sni=searchhealthcarejobsandbuildmedicalcareerpathway.com#%F0%9F%87%B8%F0%9F%87%AASE-70.34.207.14-0098",
       "latency_ms": 145,
       "network_compatibility": 0.92
     },
     {
       "protocol": "TROJAN",
       "uri": "trojan://0ab6c98dae3b48e8b9c4a776b6c9c19a@208.69.78.33:443?security=tls&sni=courses.yourultimateprofessionalcareerhub.com#%F0%9F%87%A8%F0%9F%87%ADCH-208.69.78.33-0523",
-      "latency_ms": 145,
+      "latency_ms": 146,
       "network_compatibility": 0.92
     },
     {
       "protocol": "TROJAN",
-      "uri": "trojan://0ab6c98dae3b48e8b9c4a776b6c9c19a@70.34.207.14:443?security=tls&sni=searchhealthcarejobsandbuildmedicalcareerpathway.com#%F0%9F%87%B8%F0%9F%87%AASE-70.34.207.14-0098",
-      "latency_ms": 146,
+      "uri": "trojan://0ab6c98dae3b48e8b9c4a776b6c9c19a@45.63.30.142:443?security=tls&sni=connectwithemployerstohireyouridealteam.com#%F0%9F%87%A6%F0%9F%87%BAAU-45.63.30.142-0221",
+      "latency_ms": 147,
       "network_compatibility": 0.92
     },
     {
@@ -155,8 +155,14 @@
     },
     {
       "protocol": "TROJAN",
+      "uri": "trojan://5t6i121em5lkmsmk@kr002.zestapp778.com:48851?security=tls&sni=kr002.zestapp778.com#%F0%9F%87%B0%F0%9F%87%B7KR-158.247.220.26-0213",
+      "latency_ms": 151,
+      "network_compatibility": 0.92
+    },
+    {
+      "protocol": "TROJAN",
       "uri": "trojan://0ab6c98dae3b48e8b9c4a776b6c9c19a@216.238.104.154:443?security=tls&sni=findtemporaryworkandfreelancerprojectsonlineplatform.com#%F0%9F%87%A7%F0%9F%87%B7BR-216.238.104.154-0176",
-      "latency_ms": 154,
+      "latency_ms": 151,
       "network_compatibility": 0.92
     },
     {
@@ -166,27 +172,21 @@
       "network_compatibility": 0.92
     },
     {
+      "protocol": "TROJAN",
+      "uri": "trojan://5t6i121em5lkmsmk@th001.zestapp778.com:33079?security=tls&sni=th001.zestapp778.com#%F0%9F%87%B9%F0%9F%87%ADTH-38.60.233.126-0227",
+      "latency_ms": 207,
+      "network_compatibility": 0.92
+    },
+    {
       "protocol": "VMESS",
       "uri": "vmess://ewogICAgImFkZCI6ICI1NC4zNy4xMzEuMTI2IiwKICAgICJhaWQiOiAwLAogICAgImhvc3QiOiAiZ29vZ2xlLndoYXRzYXBwLnNuYXBwLnRvcm9iLmJhc2FsYW0uaGVzYW5pZDguaXIuIiwKICAgICJpZCI6ICIwNTlmZGEzZS01Y2E5LTRmYmQtZGQ4OS0wMWNjNmQ0YmI1ZGQiLAogICAgIm5ldCI6ICJ3cyIsCiAgICAicGF0aCI6ICIvIiwKICAgICJwb3J0IjogODAsCiAgICAicHMiOiAi8J+Hq/Cfh7dGUi01NC4zNy4xMzEuMTI2LTAyNDQiLAogICAgInRscyI6ICIiLAogICAgInR5cGUiOiAiYXV0byIsCiAgICAic2VjdXJpdHkiOiAiYXV0byIsCiAgICAic2tpcC1jZXJ0LXZlcmlmeSI6IHRydWUsCiAgICAic25pIjogIiIKfQ==",
-      "latency_ms": 198,
+      "latency_ms": 221,
       "network_compatibility": 0.75
     },
     {
       "protocol": "TROJAN",
-      "uri": "trojan://5t6i121em5lkmsmk@th001.zestapp778.com:33079?security=tls&sni=th001.zestapp778.com#%F0%9F%87%B9%F0%9F%87%ADTH-38.60.233.126-0227",
-      "latency_ms": 242,
-      "network_compatibility": 0.92
-    },
-    {
-      "protocol": "TROJAN",
       "uri": "trojan://5t6i121em5lkmsmk@ph001.zestapp778.com:46298?security=tls&sni=ph001.zestapp778.com#%F0%9F%87%B5%F0%9F%87%ADPH-130.94.51.219-0235",
-      "latency_ms": 318,
-      "network_compatibility": 0.92
-    },
-    {
-      "protocol": "TROJAN",
-      "uri": "trojan://5t6i121em5lkmsmk@kr002.zestapp778.com:48851?security=tls&sni=kr002.zestapp778.com#%F0%9F%87%B0%F0%9F%87%B7KR-158.247.220.26-0213",
-      "latency_ms": 1215,
+      "latency_ms": 233,
       "network_compatibility": 0.92
     }
   ]
