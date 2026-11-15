@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "generated_at_epoch": 1794690877,
+  "generated_at_epoch": 1794705205,
   "generated_by": "MAXNET5G Lightweight Auto-VPN Collector",
   "supported_protocols": [
     "VLESS",
@@ -10,213 +10,213 @@
   ],
   "candidates": [
     {
-      "protocol": "TROJAN",
-      "uri": "trojan://0ab6c98dae3b48e8b9c4a776b6c9c19a@66.163.112.13:443?security=tls&sni=blog.unlockyourfuturefindyourperfectcareer.com#%F0%9F%87%BA%F0%9F%87%B8US-66.163.112.13-0128",
-      "latency_ms": 3,
-      "network_compatibility": 0.92
-    },
-    {
-      "protocol": "TROJAN",
-      "uri": "trojan://0ab6c98dae3b48e8b9c4a776b6c9c19a@66.163.112.121:443?security=tls&sni=www.unlockyourfuturefindyourperfectcareer.com#%F0%9F%87%BA%F0%9F%87%B8US-66.163.112.121-0119",
-      "latency_ms": 3,
-      "network_compatibility": 0.92
-    },
-    {
-      "protocol": "VMESS",
-      "uri": "vmess://ewogICAgImFkZCI6ICIxOTguNDEuMjAzLjMiLAogICAgImFpZCI6IDAsCiAgICAiaG9zdCI6ICJsZzEuY2ZjZG4zLnh5eiIsCiAgICAiaWQiOiAiMzNhYTU3ZGYtMWM5My00MzE4LTlmY2UtZTg1MDQzN2VlNzgxIiwKICAgICJuZXQiOiAid3MiLAogICAgInBhdGgiOiAiL2Rvbmd0YWl3YW5nLmNvbSIsCiAgICAicG9ydCI6IDQ0MywKICAgICJwcyI6ICLwn4+BUkVMQVktMTk4LjQxLjIwMy4zLTAwNjkiLAogICAgInRscyI6ICJ0bHMiLAogICAgInR5cGUiOiAiYXV0byIsCiAgICAic2VjdXJpdHkiOiAiYXV0byIsCiAgICAic2tpcC1jZXJ0LXZlcmlmeSI6IHRydWUsCiAgICAic25pIjogIiIKfQ==",
-      "latency_ms": 8,
-      "network_compatibility": 0.88
-    },
-    {
-      "protocol": "VMESS",
-      "uri": "vmess://ewogICAgImFkZCI6ICIxNDEuMTAxLjExNS4xMDAiLAogICAgImFpZCI6IDAsCiAgICAiaG9zdCI6ICJsZzEuY2ZjZG4yLnh5eiIsCiAgICAiaWQiOiAiMjY3YTlmMzgtNDBkOC00ZWQ2LWFiNTgtY2FmYzY3ZTljOTMzIiwKICAgICJuZXQiOiAid3MiLAogICAgInBhdGgiOiAiL1ZIT05PRlozIiwKICAgICJwb3J0IjogNDQzLAogICAgInBzIjogIvCfj4FSRUxBWS0xNDEuMTAxLjExNS4xMDAtMDA2MSIsCiAgICAidGxzIjogInRscyIsCiAgICAidHlwZSI6ICJhdXRvIiwKICAgICJzZWN1cml0eSI6ICJhdXRvIiwKICAgICJza2lwLWNlcnQtdmVyaWZ5IjogdHJ1ZSwKICAgICJzbmkiOiAiIgp9",
-      "latency_ms": 8,
-      "network_compatibility": 0.88
-    },
-    {
       "protocol": "VMESS",
       "uri": "vmess://ewogICAgImFkZCI6ICIxNzIuNjQuMTU0LjIyMiIsCiAgICAiYWlkIjogMCwKICAgICJob3N0IjogImxnMS5jZmNkbjEueHl6IiwKICAgICJpZCI6ICJmY2ZhZWM5MS02MDk2LTQ0ZDgtOTU2Yy03ODY4ZDllODc0YjEiLAogICAgIm5ldCI6ICJ3cyIsCiAgICAicGF0aCI6ICIvcmF5IiwKICAgICJwb3J0IjogNDQzLAogICAgInBzIjogIvCfj4FSRUxBWS0xNzIuNjQuMTU0LjIyMi0wMDU4IiwKICAgICJ0bHMiOiAidGxzIiwKICAgICJ0eXBlIjogImF1dG8iLAogICAgInNlY3VyaXR5IjogImF1dG8iLAogICAgInNraXAtY2VydC12ZXJpZnkiOiB0cnVlLAogICAgInNuaSI6ICIiCn0=",
-      "latency_ms": 8,
+      "latency_ms": 5,
       "network_compatibility": 0.88
     },
     {
       "protocol": "VMESS",
       "uri": "vmess://ewogICAgImFkZCI6ICIxNDEuMTAxLjExNC4xMzMiLAogICAgImFpZCI6IDAsCiAgICAiaG9zdCI6ICJsZzEuY2ZjZG4xLnh5eiIsCiAgICAiaWQiOiAiZmNmYWVjOTEtNjA5Ni00NGQ4LTk1NmMtNzg2OGQ5ZTg3NGIxIiwKICAgICJuZXQiOiAid3MiLAogICAgInBhdGgiOiAiL3JheSIsCiAgICAicG9ydCI6IDQ0MywKICAgICJwcyI6ICLwn4+BUkVMQVktMTQxLjEwMS4xMTQuMTMzLTAwNTciLAogICAgInRscyI6ICJ0bHMiLAogICAgInR5cGUiOiAiYXV0byIsCiAgICAic2VjdXJpdHkiOiAiYXV0byIsCiAgICAic2tpcC1jZXJ0LXZlcmlmeSI6IHRydWUsCiAgICAic25pIjogIiIKfQ==",
-      "latency_ms": 8,
-      "network_compatibility": 0.88
-    },
-    {
-      "protocol": "VMESS",
-      "uri": "vmess://ewogICAgImFkZCI6ICIxOTguNDEuMjAzLjIiLAogICAgImFpZCI6IDAsCiAgICAiaG9zdCI6ICJjbGFzaDEudHJ1bXAyMDIzLm5ldCIsCiAgICAiaWQiOiAiMTc2YjU5OGYtNDQ1Yi00MWFjLTlkMmEtNDMwYzVjNGRmMjZhIiwKICAgICJuZXQiOiAid3MiLAogICAgInBhdGgiOiAiL2Rvbmd0YWl3YW5nLmNvbSIsCiAgICAicG9ydCI6IDQ0MywKICAgICJwcyI6ICLwn4+BUkVMQVktMTk4LjQxLjIwMy4yLTAwNTAiLAogICAgInRscyI6ICJ0bHMiLAogICAgInR5cGUiOiAiYXV0byIsCiAgICAic2VjdXJpdHkiOiAiYXV0byIsCiAgICAic2tpcC1jZXJ0LXZlcmlmeSI6IGZhbHNlLAogICAgInNuaSI6ICJjbGFzaDEudHJ1bXAyMDIzLm5ldCIKfQ==",
-      "latency_ms": 8,
-      "network_compatibility": 0.88
-    },
-    {
-      "protocol": "VMESS",
-      "uri": "vmess://ewogICAgImFkZCI6ICIxNzIuNjQuMTQ4LjExMSIsCiAgICAiYWlkIjogMCwKICAgICJob3N0IjogImZyMi5jZmNkbjQueHl6IiwKICAgICJpZCI6ICJmMzM5NTdlOC0zNzJlLTRmYmEtOTllZC1mNGRiMzJjY2U5ZTUiLAogICAgIm5ldCI6ICJ3cyIsCiAgICAicGF0aCI6ICIvcmF5IiwKICAgICJwb3J0IjogNDQzLAogICAgInBzIjogIvCfj4FSRUxBWS0xNzIuNjQuMTQ4LjExMS0wMDQ1IiwKICAgICJ0bHMiOiAidGxzIiwKICAgICJ0eXBlIjogImF1dG8iLAogICAgInNlY3VyaXR5IjogImF1dG8iLAogICAgInNraXAtY2VydC12ZXJpZnkiOiB0cnVlLAogICAgInNuaSI6ICIiCn0=",
-      "latency_ms": 8,
+      "latency_ms": 5,
       "network_compatibility": 0.88
     },
     {
       "protocol": "VMESS",
       "uri": "vmess://ewogICAgImFkZCI6ICIxNzIuNjQuMTU0LjIwMSIsCiAgICAiYWlkIjogMCwKICAgICJob3N0IjogImxnMzAuY2ZjZG4zLnh5eiIsCiAgICAiaWQiOiAiOTE2NDZmOWEtYjRlOS00YWNhLWJmZTMtODg5MmIzZTU4ZmU3IiwKICAgICJuZXQiOiAid3MiLAogICAgInBhdGgiOiAiL3JheSIsCiAgICAicG9ydCI6IDQ0MywKICAgICJwcyI6ICLwn4+BUkVMQVktMTcyLjY0LjE1NC4yMDEtMDA1NiIsCiAgICAidGxzIjogInRscyIsCiAgICAidHlwZSI6ICJhdXRvIiwKICAgICJzZWN1cml0eSI6ICJhdXRvIiwKICAgICJza2lwLWNlcnQtdmVyaWZ5IjogdHJ1ZSwKICAgICJzbmkiOiAiIgp9",
-      "latency_ms": 9,
+      "latency_ms": 5,
+      "network_compatibility": 0.88
+    },
+    {
+      "protocol": "VMESS",
+      "uri": "vmess://ewogICAgImFkZCI6ICIxOTguNDEuMjAzLjIiLAogICAgImFpZCI6IDAsCiAgICAiaG9zdCI6ICJjbGFzaDEudHJ1bXAyMDIzLm5ldCIsCiAgICAiaWQiOiAiMTc2YjU5OGYtNDQ1Yi00MWFjLTlkMmEtNDMwYzVjNGRmMjZhIiwKICAgICJuZXQiOiAid3MiLAogICAgInBhdGgiOiAiL2Rvbmd0YWl3YW5nLmNvbSIsCiAgICAicG9ydCI6IDQ0MywKICAgICJwcyI6ICLwn4+BUkVMQVktMTk4LjQxLjIwMy4yLTAwNTAiLAogICAgInRscyI6ICJ0bHMiLAogICAgInR5cGUiOiAiYXV0byIsCiAgICAic2VjdXJpdHkiOiAiYXV0byIsCiAgICAic2tpcC1jZXJ0LXZlcmlmeSI6IGZhbHNlLAogICAgInNuaSI6ICJjbGFzaDEudHJ1bXAyMDIzLm5ldCIKfQ==",
+      "latency_ms": 5,
+      "network_compatibility": 0.88
+    },
+    {
+      "protocol": "VMESS",
+      "uri": "vmess://ewogICAgImFkZCI6ICIxNzIuNjQuMTQ4LjExMSIsCiAgICAiYWlkIjogMCwKICAgICJob3N0IjogImZyMi5jZmNkbjQueHl6IiwKICAgICJpZCI6ICJmMzM5NTdlOC0zNzJlLTRmYmEtOTllZC1mNGRiMzJjY2U5ZTUiLAogICAgIm5ldCI6ICJ3cyIsCiAgICAicGF0aCI6ICIvcmF5IiwKICAgICJwb3J0IjogNDQzLAogICAgInBzIjogIvCfj4FSRUxBWS0xNzIuNjQuMTQ4LjExMS0wMDQ1IiwKICAgICJ0bHMiOiAidGxzIiwKICAgICJ0eXBlIjogImF1dG8iLAogICAgInNlY3VyaXR5IjogImF1dG8iLAogICAgInNraXAtY2VydC12ZXJpZnkiOiB0cnVlLAogICAgInNuaSI6ICIiCn0=",
+      "latency_ms": 5,
+      "network_compatibility": 0.88
+    },
+    {
+      "protocol": "VMESS",
+      "uri": "vmess://ewogICAgImFkZCI6ICIxOTguNDEuMjAzLjMiLAogICAgImFpZCI6IDAsCiAgICAiaG9zdCI6ICJsZzEuY2ZjZG4zLnh5eiIsCiAgICAiaWQiOiAiMzNhYTU3ZGYtMWM5My00MzE4LTlmY2UtZTg1MDQzN2VlNzgxIiwKICAgICJuZXQiOiAid3MiLAogICAgInBhdGgiOiAiL2Rvbmd0YWl3YW5nLmNvbSIsCiAgICAicG9ydCI6IDQ0MywKICAgICJwcyI6ICLwn4+BUkVMQVktMTk4LjQxLjIwMy4zLTAwNjkiLAogICAgInRscyI6ICJ0bHMiLAogICAgInR5cGUiOiAiYXV0byIsCiAgICAic2VjdXJpdHkiOiAiYXV0byIsCiAgICAic2tpcC1jZXJ0LXZlcmlmeSI6IHRydWUsCiAgICAic25pIjogIiIKfQ==",
+      "latency_ms": 6,
+      "network_compatibility": 0.88
+    },
+    {
+      "protocol": "VMESS",
+      "uri": "vmess://ewogICAgImFkZCI6ICIxNDEuMTAxLjExNS4xMDAiLAogICAgImFpZCI6IDAsCiAgICAiaG9zdCI6ICJsZzEuY2ZjZG4yLnh5eiIsCiAgICAiaWQiOiAiMjY3YTlmMzgtNDBkOC00ZWQ2LWFiNTgtY2FmYzY3ZTljOTMzIiwKICAgICJuZXQiOiAid3MiLAogICAgInBhdGgiOiAiL1ZIT05PRlozIiwKICAgICJwb3J0IjogNDQzLAogICAgInBzIjogIvCfj4FSRUxBWS0xNDEuMTAxLjExNS4xMDAtMDA2MSIsCiAgICAidGxzIjogInRscyIsCiAgICAidHlwZSI6ICJhdXRvIiwKICAgICJzZWN1cml0eSI6ICJhdXRvIiwKICAgICJza2lwLWNlcnQtdmVyaWZ5IjogdHJ1ZSwKICAgICJzbmkiOiAiIgp9",
+      "latency_ms": 6,
+      "network_compatibility": 0.88
+    },
+    {
+      "protocol": "VMESS",
+      "uri": "vmess://ewogICAgImFkZCI6ICJwb3dlcnNlcnZpY2UuY29tIiwKICAgICJhaWQiOiAwLAogICAgImhvc3QiOiAidWsyLnYycmF5c2Vydi5jb20iLAogICAgImlkIjogIjA3NjRhNTk4LTgyYzQtNGI0MS1iYTEwLTU1MWE2MjViZWVkNSIsCiAgICAibmV0IjogIndzIiwKICAgICJwYXRoIjogIi9zc2hvY2VhbiIsCiAgICAicG9ydCI6IDQ0MywKICAgICJwcyI6ICLwn4+BUkVMQVktMTA0LjI2LjkuNzYtMDA3MCIsCiAgICAidGxzIjogInRscyIsCiAgICAidHlwZSI6ICJhdXRvIiwKICAgICJzZWN1cml0eSI6ICJhdXRvIiwKICAgICJza2lwLWNlcnQtdmVyaWZ5IjogdHJ1ZSwKICAgICJzbmkiOiAiIgp9",
+      "latency_ms": 45,
       "network_compatibility": 0.88
     },
     {
       "protocol": "TROJAN",
-      "uri": "trojan://0ab6c98dae3b48e8b9c4a776b6c9c19a@167.88.61.175:443?security=tls&sni=blog.browseseniorrolesandenhanceyourcareertoday.com#%F0%9F%87%BA%F0%9F%87%B8US-167.88.61.175-0112",
-      "latency_ms": 17,
+      "uri": "trojan://0ab6c98dae3b48e8b9c4a776b6c9c19a@66.163.112.121:443?security=tls&sni=www.unlockyourfuturefindyourperfectcareer.com#%F0%9F%87%BA%F0%9F%87%B8US-66.163.112.121-0119",
+      "latency_ms": 51,
+      "network_compatibility": 0.92
+    },
+    {
+      "protocol": "TROJAN",
+      "uri": "trojan://0ab6c98dae3b48e8b9c4a776b6c9c19a@66.163.112.13:443?security=tls&sni=blog.unlockyourfuturefindyourperfectcareer.com#%F0%9F%87%BA%F0%9F%87%B8US-66.163.112.13-0128",
+      "latency_ms": 53,
       "network_compatibility": 0.92
     },
     {
       "protocol": "TROJAN",
       "uri": "trojan://0ab6c98dae3b48e8b9c4a776b6c9c19a@167.88.61.52:443?security=tls&sni=courses.browseseniorrolesandenhanceyourcareertoday.com#%F0%9F%87%BA%F0%9F%87%B8US-167.88.61.52-0131",
-      "latency_ms": 17,
+      "latency_ms": 63,
       "network_compatibility": 0.92
     },
     {
       "protocol": "TROJAN",
-      "uri": "trojan://d7563108-615c-4338-a7bd-77f359869a4a@sclass-01.catcat321.com:20103?security=tls&sni=hk.catxstar.com#%F0%9F%87%BA%F0%9F%87%B8US-157.254.38.210-0244",
-      "latency_ms": 55,
-      "network_compatibility": 0.92
-    },
-    {
-      "protocol": "TROJAN",
-      "uri": "trojan://d7563108-615c-4338-a7bd-77f359869a4a@sclass-b1.catcat321.com:20027?security=tls&sni=hk.catxstar.com#%F0%9F%87%BA%F0%9F%87%B8US-157.254.38.210-0129",
-      "latency_ms": 60,
-      "network_compatibility": 0.92
-    },
-    {
-      "protocol": "TROJAN",
-      "uri": "trojan://d7563108-615c-4338-a7bd-77f359869a4a@sclass-b1.catcat321.com:20028?security=tls&sni=hk.catxstar.com#%F0%9F%87%BA%F0%9F%87%B8US-157.254.38.210-0126",
-      "latency_ms": 62,
-      "network_compatibility": 0.92
-    },
-    {
-      "protocol": "VMESS",
-      "uri": "vmess://ewogICAgImFkZCI6ICJwb3dlcnNlcnZpY2UuY29tIiwKICAgICJhaWQiOiAwLAogICAgImhvc3QiOiAidWsyLnYycmF5c2Vydi5jb20iLAogICAgImlkIjogIjA3NjRhNTk4LTgyYzQtNGI0MS1iYTEwLTU1MWE2MjViZWVkNSIsCiAgICAibmV0IjogIndzIiwKICAgICJwYXRoIjogIi9zc2hvY2VhbiIsCiAgICAicG9ydCI6IDQ0MywKICAgICJwcyI6ICLwn4+BUkVMQVktMTA0LjI2LjkuNzYtMDA3MCIsCiAgICAidGxzIjogInRscyIsCiAgICAidHlwZSI6ICJhdXRvIiwKICAgICJzZWN1cml0eSI6ICJhdXRvIiwKICAgICJza2lwLWNlcnQtdmVyaWZ5IjogdHJ1ZSwKICAgICJzbmkiOiAiIgp9",
-      "latency_ms": 73,
-      "network_compatibility": 0.88
-    },
-    {
-      "protocol": "TROJAN",
-      "uri": "trojan://f0eb8c92ce8946aaba856569cff1a16b@resources.findlocaljobnetworkandbuildcommunityconnections.com:443?security=tls&sni=resources.findlocaljobnetworkandbuildcommunityconnections.com#%F0%9F%87%BA%F0%9F%87%B8US-216.106.186.33-0217",
-      "latency_ms": 76,
-      "network_compatibility": 0.92
-    },
-    {
-      "protocol": "TROJAN",
-      "uri": "trojan://0ab6c98dae3b48e8b9c4a776b6c9c19a@158.247.253.243:443?security=tls&sni=connectgraduateswithjobopeningsandgrowprofessionally.com#%F0%9F%87%B0%F0%9F%87%B7KR-158.247.253.243-0154",
-      "latency_ms": 127,
-      "network_compatibility": 0.92
-    },
-    {
-      "protocol": "TROJAN",
-      "uri": "trojan://0ab6c98dae3b48e8b9c4a776b6c9c19a@193.108.119.29:443?security=tls&sni=blog.iloverussia2026.com#%F0%9F%87%A9%F0%9F%87%AADE-193.108.119.29-0103",
-      "latency_ms": 133,
-      "network_compatibility": 0.92
-    },
-    {
-      "protocol": "TROJAN",
-      "uri": "trojan://0ab6c98dae3b48e8b9c4a776b6c9c19a@193.108.119.96:443?security=tls&sni=learn.iloverussia2026.com#%F0%9F%87%A9%F0%9F%87%AADE-193.108.119.96-0114",
-      "latency_ms": 133,
-      "network_compatibility": 0.92
-    },
-    {
-      "protocol": "TROJAN",
-      "uri": "trojan://0ab6c98dae3b48e8b9c4a776b6c9c19a@193.108.119.193:443?security=tls&sni=resources.iloverussia2026.com#%F0%9F%87%A9%F0%9F%87%AADE-193.108.119.193-0110",
-      "latency_ms": 134,
-      "network_compatibility": 0.92
-    },
-    {
-      "protocol": "TROJAN",
-      "uri": "trojan://0ab6c98dae3b48e8b9c4a776b6c9c19a@193.108.119.15:443?security=tls&sni=courses.iloverussia2026.com#%F0%9F%87%A9%F0%9F%87%AADE-193.108.119.15-0109",
-      "latency_ms": 134,
-      "network_compatibility": 0.92
-    },
-    {
-      "protocol": "TROJAN",
-      "uri": "trojan://0ab6c98dae3b48e8b9c4a776b6c9c19a@45.63.30.142:443?security=tls&sni=connectwithemployerstohireyouridealteam.com#%F0%9F%87%A6%F0%9F%87%BAAU-45.63.30.142-0125",
-      "latency_ms": 142,
-      "network_compatibility": 0.92
-    },
-    {
-      "protocol": "VMESS",
-      "uri": "vmess://ewogICAgImFkZCI6ICIxMzguMi4xMjIuMjI1IiwKICAgICJhaWQiOiAwLAogICAgImhvc3QiOiAibGczMC5jZmNkbjMueHl6IiwKICAgICJpZCI6ICI5MTY0NmY5YS1iNGU5LTRhY2EtYmZlMy04ODkyYjNlNThmZTciLAogICAgIm5ldCI6ICJ3cyIsCiAgICAicGF0aCI6ICIvcmF5IiwKICAgICJwb3J0IjogNDQzLAogICAgInBzIjogIvCfh7Dwn4e3S1ItMTM4LjIuMTIyLjIyNS0wMDY0IiwKICAgICJ0bHMiOiAidGxzIiwKICAgICJ0eXBlIjogImF1dG8iLAogICAgInNlY3VyaXR5IjogImF1dG8iLAogICAgInNraXAtY2VydC12ZXJpZnkiOiB0cnVlLAogICAgInNuaSI6ICIiCn0=",
-      "latency_ms": 142,
-      "network_compatibility": 0.88
-    },
-    {
-      "protocol": "TROJAN",
-      "uri": "trojan://0ab6c98dae3b48e8b9c4a776b6c9c19a@208.69.78.33:443?security=tls&sni=courses.yourultimateprofessionalcareerhub.com#%F0%9F%87%A8%F0%9F%87%ADCH-208.69.78.33-0224",
-      "latency_ms": 147,
-      "network_compatibility": 0.92
-    },
-    {
-      "protocol": "TROJAN",
-      "uri": "trojan://0ab6c98dae3b48e8b9c4a776b6c9c19a@216.238.104.154:443?security=tls&sni=findtemporaryworkandfreelancerprojectsonlineplatform.com#%F0%9F%87%A7%F0%9F%87%B7BR-216.238.104.154-0106",
-      "latency_ms": 153,
-      "network_compatibility": 0.92
-    },
-    {
-      "protocol": "VMESS",
-      "uri": "vmess://ewogICAgImFkZCI6ICI0Ny4yNDQuMTIwLjE5NyIsCiAgICAiYWlkIjogMCwKICAgICJob3N0IjogIiIsCiAgICAiaWQiOiAiODQ1ZTZiMDgtMjkxOS00MjkwLWFkZTAtNWRjN2RjZWE1OWNhIiwKICAgICJuZXQiOiAid3MiLAogICAgInBhdGgiOiAiL2Fya2k/ZWQ9MjA0OCIsCiAgICAicG9ydCI6IDQ0ODY3LAogICAgInBzIjogIvCfh63wn4ewSEstNDcuMjQ0LjEyMC4xOTctNTQ1MyIsCiAgICAidGxzIjogIiIsCiAgICAidHlwZSI6ICJhdXRvIiwKICAgICJzZWN1cml0eSI6ICJhdXRvIiwKICAgICJza2lwLWNlcnQtdmVyaWZ5IjogdHJ1ZSwKICAgICJzbmkiOiAiIgp9",
-      "latency_ms": 157,
-      "network_compatibility": 0.75
-    },
-    {
-      "protocol": "TROJAN",
-      "uri": "trojan://0ab6c98dae3b48e8b9c4a776b6c9c19a@149.28.130.108:443?security=tls&sni=searchcreativejobsandshowcaseyourartistictalents.com#%F0%9F%87%B8%F0%9F%87%ACSG-149.28.130.108-0147",
-      "latency_ms": 178,
-      "network_compatibility": 0.92
-    },
-    {
-      "protocol": "VMESS",
-      "uri": "vmess://ewogICAgImFkZCI6ICIxNS4yMzUuMTQ3LjE4NiIsCiAgICAiYWlkIjogMCwKICAgICJob3N0IjogIiIsCiAgICAiaWQiOiAiNmZlYTE2NDktNDI1Yi00MDkyLWJmNTMtMjk3OTIxNTJjOTI1IiwKICAgICJuZXQiOiAid3MiLAogICAgInBhdGgiOiAiL3NzaGtpdC9FcnR1c2c4Ni82MzUwMTQ2MzhjMjY0LyIsCiAgICAicG9ydCI6IDgwLAogICAgInBzIjogIvCfh7jwn4esU0ctMTUuMjM1LjE0Ny4xODYtMDA2NyIsCiAgICAidGxzIjogIiIsCiAgICAidHlwZSI6ICJhdXRvIiwKICAgICJzZWN1cml0eSI6ICJhdXRvIiwKICAgICJza2lwLWNlcnQtdmVyaWZ5IjogdHJ1ZSwKICAgICJzbmkiOiAiIgp9",
-      "latency_ms": 182,
-      "network_compatibility": 0.75
-    },
-    {
-      "protocol": "VMESS",
-      "uri": "vmess://ewogICAgImFkZCI6ICIxMTMuMzEuMTI0LjE0NyIsCiAgICAiYWlkIjogMCwKICAgICJob3N0IjogImxnMzAuY2ZjZG4zLnh5eiIsCiAgICAiaWQiOiAiOTE2NDZmOWEtYjRlOS00YWNhLWJmZTMtODg5MmIzZTU4ZmU3IiwKICAgICJuZXQiOiAid3MiLAogICAgInBhdGgiOiAiL3JheSIsCiAgICAicG9ydCI6IDQ0MywKICAgICJwcyI6ICLwn4eo8J+Hs0NOLTExMy4zMS4xMjQuMTQ3LTAwNTMiLAogICAgInRscyI6ICJ0bHMiLAogICAgInR5cGUiOiAiYXV0byIsCiAgICAic2VjdXJpdHkiOiAiYXV0byIsCiAgICAic2tpcC1jZXJ0LXZlcmlmeSI6IHRydWUsCiAgICAic25pIjogIiIKfQ==",
-      "latency_ms": 195,
-      "network_compatibility": 0.88
-    },
-    {
-      "protocol": "TROJAN",
-      "uri": "trojan://0ab6c98dae3b48e8b9c4a776b6c9c19a@64.176.7.205:443?security=tls&sni=advanceyouremploymentskillsandcareerdevelopmenthub.com#%F0%9F%87%A8%F0%9F%87%B1CL-64.176.7.205-0098",
-      "latency_ms": 211,
+      "uri": "trojan://0ab6c98dae3b48e8b9c4a776b6c9c19a@167.88.61.175:443?security=tls&sni=blog.browseseniorrolesandenhanceyourcareertoday.com#%F0%9F%87%BA%F0%9F%87%B8US-167.88.61.175-0112",
+      "latency_ms": 65,
       "network_compatibility": 0.92
     },
     {
       "protocol": "VMESS",
       "uri": "vmess://ewogICAgImFkZCI6ICIxNDUuMjM5LjU1LjIxMCIsCiAgICAiYWlkIjogMCwKICAgICJob3N0IjogImdvb2dsZS53aGF0c2FwcC5zbmFwcC50b3JvYi5iYXNhbGFtLmZvcnRyZXNzaG9zdC5pci4iLAogICAgImlkIjogIjJiYzgwZTc3LTk1OTAtNGRlZC1hNDhiLTBlZGE0OTNmNjExYiIsCiAgICAibmV0IjogIndzIiwKICAgICJwYXRoIjogIi8iLAogICAgInBvcnQiOiA4MCwKICAgICJwcyI6ICLwn4er8J+Ht0ZSLTE0NS4yMzkuNTUuMjEwLTAyMjIiLAogICAgInRscyI6ICIiLAogICAgInR5cGUiOiAiYXV0byIsCiAgICAic2VjdXJpdHkiOiAiYXV0byIsCiAgICAic2tpcC1jZXJ0LXZlcmlmeSI6IHRydWUsCiAgICAic25pIjogIiIKfQ==",
-      "latency_ms": 213,
+      "latency_ms": 86,
       "network_compatibility": 0.75
     },
     {
       "protocol": "TROJAN",
-      "uri": "trojan://0ab6c98dae3b48e8b9c4a776b6c9c19a@15.235.184.127:443?security=tls&sni=exploredigitaljobplatformandfindonlinework.com#%F0%9F%87%B8%F0%9F%87%ACSG-15.235.184.127-0240",
-      "latency_ms": 239,
+      "uri": "trojan://0ab6c98dae3b48e8b9c4a776b6c9c19a@193.108.119.29:443?security=tls&sni=blog.iloverussia2026.com#%F0%9F%87%A9%F0%9F%87%AADE-193.108.119.29-0103",
+      "latency_ms": 88,
+      "network_compatibility": 0.92
+    },
+    {
+      "protocol": "TROJAN",
+      "uri": "trojan://0ab6c98dae3b48e8b9c4a776b6c9c19a@193.108.119.96:443?security=tls&sni=learn.iloverussia2026.com#%F0%9F%87%A9%F0%9F%87%AADE-193.108.119.96-0114",
+      "latency_ms": 88,
+      "network_compatibility": 0.92
+    },
+    {
+      "protocol": "TROJAN",
+      "uri": "trojan://0ab6c98dae3b48e8b9c4a776b6c9c19a@193.108.119.193:443?security=tls&sni=resources.iloverussia2026.com#%F0%9F%87%A9%F0%9F%87%AADE-193.108.119.193-0110",
+      "latency_ms": 88,
+      "network_compatibility": 0.92
+    },
+    {
+      "protocol": "TROJAN",
+      "uri": "trojan://0ab6c98dae3b48e8b9c4a776b6c9c19a@193.108.119.15:443?security=tls&sni=courses.iloverussia2026.com#%F0%9F%87%A9%F0%9F%87%AADE-193.108.119.15-0109",
+      "latency_ms": 88,
+      "network_compatibility": 0.92
+    },
+    {
+      "protocol": "TROJAN",
+      "uri": "trojan://f0eb8c92ce8946aaba856569cff1a16b@resources.findlocaljobnetworkandbuildcommunityconnections.com:443?security=tls&sni=resources.findlocaljobnetworkandbuildcommunityconnections.com#%F0%9F%87%BA%F0%9F%87%B8US-216.106.186.33-0217",
+      "latency_ms": 109,
+      "network_compatibility": 0.92
+    },
+    {
+      "protocol": "TROJAN",
+      "uri": "trojan://0ab6c98dae3b48e8b9c4a776b6c9c19a@64.176.7.205:443?security=tls&sni=advanceyouremploymentskillsandcareerdevelopmenthub.com#%F0%9F%87%A8%F0%9F%87%B1CL-64.176.7.205-0098",
+      "latency_ms": 111,
+      "network_compatibility": 0.92
+    },
+    {
+      "protocol": "TROJAN",
+      "uri": "trojan://0ab6c98dae3b48e8b9c4a776b6c9c19a@216.238.104.154:443?security=tls&sni=findtemporaryworkandfreelancerprojectsonlineplatform.com#%F0%9F%87%A7%F0%9F%87%B7BR-216.238.104.154-0106",
+      "latency_ms": 112,
+      "network_compatibility": 0.92
+    },
+    {
+      "protocol": "TROJAN",
+      "uri": "trojan://0ab6c98dae3b48e8b9c4a776b6c9c19a@158.247.253.243:443?security=tls&sni=connectgraduateswithjobopeningsandgrowprofessionally.com#%F0%9F%87%B0%F0%9F%87%B7KR-158.247.253.243-0154",
+      "latency_ms": 172,
+      "network_compatibility": 0.92
+    },
+    {
+      "protocol": "TROJAN",
+      "uri": "trojan://d7563108-615c-4338-a7bd-77f359869a4a@sclass-b1.catcat321.com:20027?security=tls&sni=hk.catxstar.com#%F0%9F%87%BA%F0%9F%87%B8US-157.254.38.210-0129",
+      "latency_ms": 180,
+      "network_compatibility": 0.92
+    },
+    {
+      "protocol": "TROJAN",
+      "uri": "trojan://d7563108-615c-4338-a7bd-77f359869a4a@sclass-b1.catcat321.com:20028?security=tls&sni=hk.catxstar.com#%F0%9F%87%BA%F0%9F%87%B8US-157.254.38.210-0126",
+      "latency_ms": 182,
+      "network_compatibility": 0.92
+    },
+    {
+      "protocol": "TROJAN",
+      "uri": "trojan://0ab6c98dae3b48e8b9c4a776b6c9c19a@45.63.30.142:443?security=tls&sni=connectwithemployerstohireyouridealteam.com#%F0%9F%87%A6%F0%9F%87%BAAU-45.63.30.142-0125",
+      "latency_ms": 185,
       "network_compatibility": 0.92
     },
     {
       "protocol": "VMESS",
-      "uri": "vmess://ewogICAgImFkZCI6ICJjbGFzaC5kZG00LmNuIiwKICAgICJhaWQiOiAwLAogICAgImhvc3QiOiAiY2xhc2guZGRtNC5jbiIsCiAgICAiaWQiOiAiZDAwNmVmNGEtZDIzNS00NjkxLWJmMDUtYWJiZTBkMTQwNTVjIiwKICAgICJuZXQiOiAid3MiLAogICAgInBhdGgiOiAiL3ZtZXNzIiwKICAgICJwb3J0IjogNDQzLAogICAgInBzIjogIvCfh7rwn4e4VVMtNjQuMTg2LjIzMy4yMzMtMjU0OSIsCiAgICAidGxzIjogInRscyIsCiAgICAidHlwZSI6ICJhdXRvIiwKICAgICJzZWN1cml0eSI6ICJhdXRvIiwKICAgICJza2lwLWNlcnQtdmVyaWZ5IjogdHJ1ZSwKICAgICJzbmkiOiAiIgp9",
-      "latency_ms": 267,
+      "uri": "vmess://ewogICAgImFkZCI6ICIxMzguMi4xMjIuMjI1IiwKICAgICJhaWQiOiAwLAogICAgImhvc3QiOiAibGczMC5jZmNkbjMueHl6IiwKICAgICJpZCI6ICI5MTY0NmY5YS1iNGU5LTRhY2EtYmZlMy04ODkyYjNlNThmZTciLAogICAgIm5ldCI6ICJ3cyIsCiAgICAicGF0aCI6ICIvcmF5IiwKICAgICJwb3J0IjogNDQzLAogICAgInBzIjogIvCfh7Dwn4e3S1ItMTM4LjIuMTIyLjIyNS0wMDY0IiwKICAgICJ0bHMiOiAidGxzIiwKICAgICJ0eXBlIjogImF1dG8iLAogICAgInNlY3VyaXR5IjogImF1dG8iLAogICAgInNraXAtY2VydC12ZXJpZnkiOiB0cnVlLAogICAgInNuaSI6ICIiCn0=",
+      "latency_ms": 191,
       "network_compatibility": 0.88
     },
     {
+      "protocol": "VMESS",
+      "uri": "vmess://ewogICAgImFkZCI6ICI0Ny4yNDQuMTIwLjE5NyIsCiAgICAiYWlkIjogMCwKICAgICJob3N0IjogIiIsCiAgICAiaWQiOiAiODQ1ZTZiMDgtMjkxOS00MjkwLWFkZTAtNWRjN2RjZWE1OWNhIiwKICAgICJuZXQiOiAid3MiLAogICAgInBhdGgiOiAiL2Fya2k/ZWQ9MjA0OCIsCiAgICAicG9ydCI6IDQ0ODY3LAogICAgInBzIjogIvCfh63wn4ewSEstNDcuMjQ0LjEyMC4xOTctNTQ1MyIsCiAgICAidGxzIjogIiIsCiAgICAidHlwZSI6ICJhdXRvIiwKICAgICJzZWN1cml0eSI6ICJhdXRvIiwKICAgICJza2lwLWNlcnQtdmVyaWZ5IjogdHJ1ZSwKICAgICJzbmkiOiAiIgp9",
+      "latency_ms": 201,
+      "network_compatibility": 0.75
+    },
+    {
+      "protocol": "VMESS",
+      "uri": "vmess://ewogICAgImFkZCI6ICJjbGFzaC5kZG00LmNuIiwKICAgICJhaWQiOiAwLAogICAgImhvc3QiOiAiY2xhc2guZGRtNC5jbiIsCiAgICAiaWQiOiAiZDAwNmVmNGEtZDIzNS00NjkxLWJmMDUtYWJiZTBkMTQwNTVjIiwKICAgICJuZXQiOiAid3MiLAogICAgInBhdGgiOiAiL3ZtZXNzIiwKICAgICJwb3J0IjogNDQzLAogICAgInBzIjogIvCfh7rwn4e4VVMtNjQuMTg2LjIzMy4yMzMtMjU0OSIsCiAgICAidGxzIjogInRscyIsCiAgICAidHlwZSI6ICJhdXRvIiwKICAgICJzZWN1cml0eSI6ICJhdXRvIiwKICAgICJza2lwLWNlcnQtdmVyaWZ5IjogdHJ1ZSwKICAgICJzbmkiOiAiIgp9",
+      "latency_ms": 218,
+      "network_compatibility": 0.88
+    },
+    {
+      "protocol": "VMESS",
+      "uri": "vmess://ewogICAgImFkZCI6ICIxNS4yMzUuMTQ3LjE4NiIsCiAgICAiYWlkIjogMCwKICAgICJob3N0IjogIiIsCiAgICAiaWQiOiAiNmZlYTE2NDktNDI1Yi00MDkyLWJmNTMtMjk3OTIxNTJjOTI1IiwKICAgICJuZXQiOiAid3MiLAogICAgInBhdGgiOiAiL3NzaGtpdC9FcnR1c2c4Ni82MzUwMTQ2MzhjMjY0LyIsCiAgICAicG9ydCI6IDgwLAogICAgInBzIjogIvCfh7jwn4esU0ctMTUuMjM1LjE0Ny4xODYtMDA2NyIsCiAgICAidGxzIjogIiIsCiAgICAidHlwZSI6ICJhdXRvIiwKICAgICJzZWN1cml0eSI6ICJhdXRvIiwKICAgICJza2lwLWNlcnQtdmVyaWZ5IjogdHJ1ZSwKICAgICJzbmkiOiAiIgp9",
+      "latency_ms": 222,
+      "network_compatibility": 0.75
+    },
+    {
       "protocol": "TROJAN",
-      "uri": "trojan://14bdba6dede262387ebdebaa706e1c90@trs12.bolab.net:443?security=tls#%F0%9F%87%AF%F0%9F%87%B5JP-153.125.148.41-0051",
-      "latency_ms": 268,
+      "uri": "trojan://0ab6c98dae3b48e8b9c4a776b6c9c19a@149.28.130.108:443?security=tls&sni=searchcreativejobsandshowcaseyourartistictalents.com#%F0%9F%87%B8%F0%9F%87%ACSG-149.28.130.108-0147",
+      "latency_ms": 224,
       "network_compatibility": 0.92
     },
     {
       "protocol": "TROJAN",
+      "uri": "trojan://d7563108-615c-4338-a7bd-77f359869a4a@sclass-01.catcat321.com:20103?security=tls&sni=hk.catxstar.com#%F0%9F%87%BA%F0%9F%87%B8US-157.254.38.210-0244",
+      "latency_ms": 238,
+      "network_compatibility": 0.92
+    },
+    {
+      "protocol": "VMESS",
+      "uri": "vmess://ewogICAgImFkZCI6ICIxMTMuMzEuMTI0LjE0NyIsCiAgICAiYWlkIjogMCwKICAgICJob3N0IjogImxnMzAuY2ZjZG4zLnh5eiIsCiAgICAiaWQiOiAiOTE2NDZmOWEtYjRlOS00YWNhLWJmZTMtODg5MmIzZTU4ZmU3IiwKICAgICJuZXQiOiAid3MiLAogICAgInBhdGgiOiAiL3JheSIsCiAgICAicG9ydCI6IDQ0MywKICAgICJwcyI6ICLwn4eo8J+Hs0NOLTExMy4zMS4xMjQuMTQ3LTAwNTMiLAogICAgInRscyI6ICJ0bHMiLAogICAgInR5cGUiOiAiYXV0byIsCiAgICAic2VjdXJpdHkiOiAiYXV0byIsCiAgICAic2tpcC1jZXJ0LXZlcmlmeSI6IHRydWUsCiAgICAic25pIjogIiIKfQ==",
+      "latency_ms": 241,
+      "network_compatibility": 0.88
+    },
+    {
+      "protocol": "TROJAN",
       "uri": "trojan://d9064589-74af-432a-9390-5d8a9da281bf@sclass-00.catcat321.com:20123?security=tls&sni=hk.catxstar.com#%F0%9F%87%AD%F0%9F%87%B0HK-16.106.7.232-0252",
-      "latency_ms": 348,
+      "latency_ms": 309,
+      "network_compatibility": 0.92
+    },
+    {
+      "protocol": "TROJAN",
+      "uri": "trojan://0ab6c98dae3b48e8b9c4a776b6c9c19a@15.235.184.127:443?security=tls&sni=exploredigitaljobplatformandfindonlinework.com#%F0%9F%87%B8%F0%9F%87%ACSG-15.235.184.127-0240",
+      "latency_ms": 315,
+      "network_compatibility": 0.92
+    },
+    {
+      "protocol": "TROJAN",
+      "uri": "trojan://14bdba6dede262387ebdebaa706e1c90@trs12.bolab.net:443?security=tls#%F0%9F%87%AF%F0%9F%87%B5JP-153.125.148.41-0051",
+      "latency_ms": 358,
+      "network_compatibility": 0.92
+    },
+    {
+      "protocol": "TROJAN",
+      "uri": "trojan://0ab6c98dae3b48e8b9c4a776b6c9c19a@208.69.78.33:443?security=tls&sni=courses.yourultimateprofessionalcareerhub.com#%F0%9F%87%A8%F0%9F%87%ADCH-208.69.78.33-0224",
+      "latency_ms": 1154,
       "network_compatibility": 0.92
     }
   ]
